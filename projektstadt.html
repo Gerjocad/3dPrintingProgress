@@ -1576,7 +1576,7 @@ function renderPanel(){
   if (!ruin && !done && sel===p.step){
     const ready = cl.length && clDone===cl.length;
     h += '<div class="actions">'+(ready?'<span class="ready">Checkliste erledigt – bereit fürs nächste Stockwerk.</span>':'')
-      + '<button class="btn primary" data-act="complete">'+(p.step===n-1?(p.version>1?'Version '+p.version+' fertigstellen':'Projekt fertigstellen'):'Schritt abschließen · nächstes Stockwerk')+'</button></div>';
+      + '<button class="btn primary" data-act="complete">Etage abschließen …</button></div><div id="completeBox"></div>';
   }
   if (sd.history.length){
     h += '<details class="hist"><summary>Frühere Versionen dieses Stockwerks ('+sd.history.length+')</summary><ul class="list">'
@@ -1585,13 +1585,14 @@ function renderPanel(){
   }
   if (!ruin){
     const canUpdate = sel < p.step && !hasBranch;
-    const canRemove = !done && sel >= p.step && n > 1 && !(sel < p.builtTop);
+    const canRemove = n > 1;
     const canBranch = !sub && !p.branch && !done && !upd && sel===p.step && p.step>=1;
-    if (canUpdate || canRemove || canBranch){
+    {
       h += '<div class="actions">'
         + (canBranch ? '<button class="btn small" data-act="ask-branch">⑂ Verzweigung ab hier</button>' : '')
         + (canUpdate ? '<button class="btn small" data-act="ask-update">Update ab diesem Stockwerk</button>' : '')
-        + (canRemove ? '<button class="btn small ghost danger" data-act="ask-rmstep">Schritt entfernen</button>' : '')
+        + '<button class="btn small ghost" data-act="ask-rnstep">Etage umbenennen</button>'
+        + (canRemove ? '<button class="btn small ghost danger" data-act="ask-rmstep">Etage löschen</button>' : '')
         + '</div><div id="stepConfirm"></div>';
     }
   }
@@ -1666,6 +1667,34 @@ async function downloadZip(filename, entries){
   const blob = await zip.generateAsync({type:'blob', compression:'DEFLATE', compressionOptions:{level:6}});
   const ok = await saveFile(filename, blob);
   if (ok) toast(missing ? 'ZIP bereit – '+missing+' Datei(en) nicht gefunden' : 'ZIP mit '+(entries.length)+' Dateien bereit');
+}
+
+/* ---------- finishing a floor ---------- */
+function completeStep(p, newName){
+  const now = new Date().toISOString();
+  p.stepData[p.step].doneAt = now;
+  p.stepData[p.step].ver = p.version;
+  if (newName){ // build a new floor right above instead of the planned one
+    const pos = p.step+1;
+    p.steps.splice(pos,0,newName); p.stepData.splice(pos,0,emptyStep());
+    p.stepData[pos].ver = p.version; applyTemplateChecks(p,pos);
+    if (p.builtTop > pos) p.builtTop += 1;
+  }
+  p.step++;
+  const n = nSteps(p);
+  if (p.step >= n){
+    const own = curOwner();
+    p.doneAt = now; p.builtTop = 0;
+    p.updates.forEach(u=>{ if(!u.doneAt && !u.uid && u.kind!=='branch') u.doneAt = now; });
+    if (own !== p){
+      own.updates.forEach(x=>{ if (x.uid===p.id && !x.doneAt) x.doneAt = now; });
+      if (own.branch && projectDone(own)) own.updates.forEach(x=>{ if (x.kind==='branch' && !x.doneAt) x.doneAt = now; });
+      if (projectDone(own) && !own.doneAt) own.doneAt = now;
+      toast((p.kind==='arm'?'Zweig':'Anbau')+' fertig: '+p.name+(projectDone(own)?' · '+own.name+' ist komplett':''));
+    } else toast(p.version>1 ? 'Version '+p.version+' fertiggestellt: '+p.name : 'Fertiggestellt: '+p.name);
+  } else toast((newName?'Neue Etage ':'')+uTag(p.step)+' · '+stepName(p,p.step)+' ist jetzt Baustelle');
+  S.selStep = Math.min(p.step, n-1);
+  persist(p); syncBuildings(); renderPanel(); updateStats(); flyToSel(S.selStep);
 }
 
 /* ---------- branch & annex ---------- */
@@ -1796,6 +1825,8 @@ $('#panelBody').addEventListener('submit', e=>{
   e.preventDefault(); const p=curP(); if(!p) return;
   const sd = p.stepData[Math.min(S.selStep,nSteps(p)-1)];
   if (e.target.dataset.form==='ck'){ const v=$('#f-ck').value.trim(); if(!v) return; sd.checklist.push({id:uid(),t:v,done:false}); persist(p); renderPanel(); $('#f-ck').focus(); }
+  if (e.target.dataset.form==='complete-new'){ const nm=$('#f-newfloor').value.trim(); if(!nm){ $('#f-newfloor').focus(); return; } completeStep(p, nm); return; }
+  if (e.target.dataset.form==='rnstep'){ const nm=$('#f-rnstep').value.trim(); if(!nm) return; const i=Math.min(S.selStep,nSteps(p)-1); p.steps[i]=nm; persist(p); renderPanel(); toast('Etage umbenannt'); return; }
   if (e.target.dataset.form==='branch'){ createBranch(curOwner(), $('#f-bra').value.trim()||'Variante A', $('#f-brb').value.trim()||'Variante B'); return; }
   if (e.target.dataset.form==='annex'){ const nm=$('#f-annex').value.trim(); if(!nm) return; createAnnex(curOwner(), nm); return; }
   if (e.target.dataset.form==='rename'){ const nm=$('#f-rename').value.trim(); if(!nm) return; p.name = nm; persist(p); renderPanel(); return; }
@@ -1838,23 +1869,20 @@ $('#panelBody').addEventListener('click', async e=>{
       await downloadZip(cleanName(own.name)+' - '+cleanName(uTag(sel)+' '+stepName(p,sel))+'.zip', sd.files.map(r=>({ref:r, path:r.name}))); break; }
     case 'zipall': { const own = curOwner(); await downloadZip(cleanName(own.name)+' - alle STL.zip', allStl(own)); break; }
     case 'complete': {
-      p.stepData[p.step].doneAt = new Date().toISOString();
-      p.stepData[p.step].ver = p.version;
-      p.step++;
-      if (p.step >= n){
-        const own = curOwner(), now = new Date().toISOString();
-        p.doneAt = now; p.builtTop = 0;
-        p.updates.forEach(u=>{ if(!u.doneAt && !u.uid && u.kind!=='branch') u.doneAt = now; });
-        if (own !== p){
-          own.updates.forEach(x=>{ if (x.uid===p.id && !x.doneAt) x.doneAt = now; });
-          if (own.branch && projectDone(own)) own.updates.forEach(x=>{ if (x.kind==='branch' && !x.doneAt) x.doneAt = now; });
-          if (projectDone(own) && !own.doneAt) own.doneAt = now;
-          toast((p.kind==='arm'?'Zweig':'Anbau')+' fertig: '+p.name+(projectDone(own)?' · '+own.name+' ist komplett':''));
-        } else toast(p.version>1 ? 'Version '+p.version+' fertiggestellt: '+p.name : 'Fertiggestellt: '+p.name);
-      } else toast(uTag(p.step)+' · '+stepName(p,p.step)+' ist jetzt Baustelle');
-      S.selStep = Math.min(p.step, n-1);
-      persist(p); syncBuildings(); renderPanel(); updateStats(); flyToSel(S.selStep); break;
+      const last = p.step===n-1;
+      const goLbl = last ? (p.version>1?'Version '+p.version+' fertigstellen':(curOwner()!==p?(p.kind==='arm'?'Zweig':'Anbau')+' fertigstellen':'Projekt fertigstellen'))
+                         : 'Weiter wie geplant → '+uTag(p.step+1)+' '+esc(stepName(p,p.step+1));
+      $('#completeBox').innerHTML = '<div class="confirm choice" style="margin-top:8px;display:grid;gap:10px;background:var(--surface)">'
+        + '<span><b>'+uTag(p.step)+' · '+esc(stepName(p,p.step))+'</b> ist fertig. Wie geht es weiter?</span>'
+        + '<button class="btn primary" data-act="complete-go">'+goLbl+'</button>'
+        + '<form data-form="complete-new" class="addrow"><input type="text" id="f-newfloor" placeholder="Neue Etage dazwischen, z. B. Zweiter Testdruck" aria-label="Name der neuen Etage"><button class="btn">Neue Etage bauen</button></form>'
+        + (last ? '' : '<span class="empty-note">Die neue Etage kommt direkt über diese. „'+esc(stepName(p,p.step+1))+'“ und alles darüber rutschen eine Etage höher.</span>')
+        + '<div><button type="button" class="btn small ghost" data-act="nope">Abbrechen</button></div></div>';
+      $('#completeBox').scrollIntoView({block:'nearest', behavior: reduceMotion?'auto':'smooth'});
+      break;
     }
+    case 'complete-go': completeStep(p, ''); break;
+    case 'ask-rnstep': $('#stepConfirm').innerHTML = '<form class="confirm" data-form="rnstep" style="margin-top:4px;display:grid;gap:8px;background:var(--surface)"><span>Etage '+uTag(sel)+' umbenennen</span><input type="text" id="f-rnstep" value="'+esc(stepName(p,sel))+'" aria-label="Neuer Name der Etage"><div class="actions"><button class="btn small primary">Umbenennen</button><button type="button" class="btn small" data-act="nope">Abbrechen</button></div></form>'; $('#f-rnstep').select(); break;
     case 'back': {
       p.step = Math.max(0, p.step-1); p.stepData[p.step].doneAt=''; p.doneAt='';
       { const own = curOwner(); if (own !== p){ own.doneAt=''; own.updates.forEach(x=>{ if (x.uid===p.id || x.kind==='branch') x.doneAt=''; }); } }
@@ -1863,7 +1891,7 @@ $('#panelBody').addEventListener('click', async e=>{
     case 'resume': p.state='aktiv'; persist(p); syncBuildings(); renderPanel(); updateStats(); toast('Die Baustelle läuft wieder.'); break;
     case 'ask-abandon': $('#confirmBox').innerHTML = '<div class="confirm" style="margin-top:10px"><span>Projekt abbrechen? Es bleibt als Ruine in der Stadt stehen.</span><button class="btn small danger" data-act="abandon">Ja, abbrechen</button><button class="btn small" data-act="nope">Nein</button></div>'; break;
     case 'ask-delete': $('#confirmBox').innerHTML = '<div class="confirm" style="margin-top:10px"><span>Projekt mit allen Notizen und Dateien endgültig löschen?</span><button class="btn small danger" data-act="delete">Endgültig löschen</button><button class="btn small" data-act="nope">Abbrechen</button></div>'; break;
-    case 'nope': $('#confirmBox').innerHTML=''; if ($('#stepConfirm')) $('#stepConfirm').innerHTML=''; break;
+    case 'nope': $('#confirmBox').innerHTML=''; if ($('#stepConfirm')) $('#stepConfirm').innerHTML=''; if ($('#completeBox')) $('#completeBox').innerHTML=''; break;
     case 'ask-update': {
       const last = done ? n : p.step;
       $('#stepConfirm').innerHTML = '<form class="confirm upd" data-form="update" style="margin-top:4px;display:grid;gap:8px;background:var(--accent-soft)">'
@@ -1882,14 +1910,21 @@ $('#panelBody').addEventListener('click', async e=>{
         + '<div class="actions"><button class="btn small primary">'+(done?'Wieder eröffnen':'Einfügen')+'</button><button type="button" class="btn small" data-act="nope">Abbrechen</button></div></form>';
       $('#f-newstep').focus(); break;
     }
-    case 'ask-rmstep': $('#stepConfirm').innerHTML = '<div class="confirm" style="margin-top:4px"><span>„'+esc(stepName(p,sel))+'“ mit Notizen und Dateien aus dem Bauplan entfernen?</span><button class="btn small danger" data-act="rmstep">Entfernen</button><button class="btn small" data-act="nope">Abbrechen</button></div>'; break;
+    case 'ask-rmstep': {
+      const built = sel < p.step || sel < p.builtTop;
+      $('#stepConfirm').innerHTML = '<div class="confirm" style="margin-top:4px"><span>Etage '+uTag(sel)+' „'+esc(stepName(p,sel))+'“ mit Notizen, Bildern und Dateien aus dem Bauplan löschen?'+(built?' Das Gebäude wird eine Etage niedriger.':'')+'</span><button class="btn small danger" data-act="rmstep">Etage löschen</button><button class="btn small" data-act="nope">Abbrechen</button></div>'; break;
+    }
     case 'rmstep': {
-      const i = Math.min(S.selStep,n-1); const old = p.stepData[i];
+      const i = Math.min(S.selStep,n-1), own = curOwner(); const old = p.stepData[i];
+      if (n <= 1) break;
       [...old.images, ...old.files].forEach(deleteFile);
       p.steps.splice(i,1); p.stepData.splice(i,1);
-      if (p.step >= nSteps(p)){ p.doneAt = p.doneAt || new Date().toISOString(); p.builtTop = 0; }
+      if (i < p.step) p.step--;
+      if (p.builtTop > i) p.builtTop--;
+      if (own === p && p.branch) p.branch.at = nSteps(p);
+      if (p.step >= nSteps(p)){ p.step = nSteps(p); p.doneAt = p.doneAt || new Date().toISOString(); p.builtTop = 0; }
       S.selStep = Math.min(i, nSteps(p)-1);
-      persist(p); syncBuildings(); renderPanel(); updateStats(); flyToSel(S.selStep); toast('Schritt entfernt'); break;
+      persist(p); syncBuildings(); renderPanel(); updateStats(); flyToSel(S.selStep); toast('Etage gelöscht'); break;
     }
     case 'abandon': p.state='abgebrochen'; persist(p); syncBuildings(); renderPanel(); updateStats(); toast('Projekt abgebrochen – die Ruine bleibt stehen.'); break;
     case 'delete': { const name=p.name; closePanel(); await removeProject(p); syncBuildings(); updateStats(); $('#empty').hidden = S.projects.size>0; toast(name+' gelöscht'); break; }
