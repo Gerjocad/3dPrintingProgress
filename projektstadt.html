@@ -357,6 +357,7 @@ function persist(p){
     pending.set(p.id, setTimeout(()=>flush(p.id), 600));
     setSave('Speichert …');
   } else { saveLocal(); }
+  if (p.id === S.selId) refreshCutawaySoon();
 }
 async function flush(id){
   clearTimeout(pending.get(id));
@@ -847,45 +848,50 @@ function buildBuilding(p){
       const fg = new THREE.Group(); fg.position.y = base + i*h; root.add(fg);
       if (i < count-1){
         const m = box(w*(1-.03*i),h,d*(1-.03*i),ruinMat(p.type),(R()-.5)*.3,h/2,(R()-.5)*.3); m.rotation.z=(R()-.5)*.05; fg.add(m);
-        fg.add(box(w+.15,.16,d+.15,M.soot,0,h,0));
+        const sl = box(w+.15,.16,d+.15,M.soot,0,h,0); fg.add(sl); fg.userData.solid=[m,sl];
       } else {
+        fg.userData.solid=[];
         for (let k=0;k<6;k++){ const side=k%4, ww=1+R()*2.6, hh=h*(.35+R()*.75);
           const along=(R()-.5)*(side%2? d:w)*.75;
           const x = side===0? along : side===2? along : (side===1? w/2-.15 : -w/2+.15);
           const z = side===1? along : side===3? along : (side===0? d/2-.15 : -d/2+.15);
           const m = box(side%2?.3:ww, hh, side%2?ww:.3, ruinMat(p.type), x, hh/2, z); m.rotation.z=(R()-.5)*.25; fg.add(m); }
       }
-      tagPick(fg,p.id,i); floors.push(fg);
+      fg.userData.baseY = fg.position.y; tagPick(fg,p.id,i); floors.push(fg);
     }
     for (let k=0;k<14;k++){ const s=.3+R()*.9; const m=box(s,s*.6,s,k%3?M.rubble:M.soot,(R()-.5)*(w+3),s*.3,(R()-.5)*(d+3)); m.rotation.set(R(),R()*3,R()); root.add(m); }
     const burn = new THREE.Mesh(new THREE.CircleGeometry(5.6,20), M.soot); burn.rotation.x=-Math.PI/2; burn.position.y=.12; burn.material=M.soot; root.add(burn);
     tagPick(root,p.id,count-1); floors.forEach((f,i)=>tagPick(f,p.id,i));
-    return {root, floors, info:{x:L.x,z:L.z,base,h,n:count,top:base+count*h}};
+    return {root, floors, roof:null, info:{x:L.x,z:L.z,base,h,n:count,top:base+count*h}};
   }
   const count = done ? n : p.step+1;
   for (let i=0;i<count;i++){
     const fg = new THREE.Group(); fg.position.y = base + i*h; root.add(fg);
     const constructing = !done && i===p.step;
     if (constructing){
-      fg.add(box(w-.1,h,d-.1,rohbauMat,0,h/2,0));
-      fg.add(box(w+.1,.18,d+.1,M.concrete,0,h,0));
+      const a = box(w-.1,h,d-.1,rohbauMat,0,h/2,0), b = box(w+.1,.18,d+.1,M.concrete,0,h,0);
+      fg.add(a,b); fg.userData.solid=[a,b]; fg.userData.wallMat=rohbauMat;
       fg.add(makeScaffold(w,h,d));
     } else {
-      fg.add(box(w,h,d,facadeMat(p.type, (i + (R()*4|0))%4),0,h/2,0));
-      if (p.type!=='app') fg.add(box(w+.18,.18,d+.18,M.ledge,0,h,0));
-      if (i===0){ fg.add(box(1.5,2.1,.12,M.dark,0,1.05,d/2+.03)); fg.add(box(2.4,.12,1,M.ledge,0,2.3,d/2+.5)); }
+      const fm = facadeMat(p.type, (i + (R()*4|0))%4);
+      const sol = [box(w,h,d,fm,0,h/2,0)];
+      if (p.type!=='app') sol.push(box(w+.18,.18,d+.18,M.ledge,0,h,0));
+      if (i===0){ sol.push(box(1.5,2.1,.12,M.dark,0,1.05,d/2+.03)); }
+      sol.forEach(m=>fg.add(m)); fg.userData.solid=sol; fg.userData.wallMat=fm;
+      if (i===0) fg.add(box(2.4,.12,1,M.ledge,0,2.3,d/2+.5));
     }
-    tagPick(fg,p.id,i); floors.push(fg);
+    fg.userData.baseY = fg.position.y; tagPick(fg,p.id,i); floors.push(fg);
   }
   const top = base + count*h;
-  if (done){ const r = addRoof(root,p.type,top,F); tagPick(r,p.id,n-1); }
+  let roof = null;
+  if (done){ roof = addRoof(root,p.type,top,F); roof.userData.baseY = top; tagPick(roof,p.id,n-1); }
   else {
     const fence = makeFence(); tagPick(fence,p.id,p.step); root.add(fence);
     const crane = makeCrane(top+6, top+1.2); crane.position.set(w/2+1.7,0,-d/2-1.5); crane.userData.phase=R()*6; tagPick(crane,p.id,p.step); root.add(crane);
     root.userData.crane = crane;
   }
   tagPick(found,p.id,0);
-  return {root, floors, info:{x:L.x,z:L.z,base,h,n:count,top}};
+  return {root, floors, roof, info:{x:L.x,z:L.z,base,h,n:count,top}};
 }
 
 function syncBuildings(){
@@ -899,7 +905,7 @@ function syncBuildings(){
     if (old){ bldGroup.remove(old.group); disposeGroup(old.group); }
     bldGroup.add(built.root);
     const prevStep = old ? old.step : null;
-    buildings.set(p.id, {group:built.root, sig, info:built.info, step:p.step, state:p.state});
+    buildings.set(p.id, {group:built.root, floors:built.floors, roof:built.roof, sig, info:built.info, step:p.step, state:p.state});
     if (!reduceMotion && S.loaded){
       const from = !old ? 0 : (old.state===p.state && p.step>prevStep ? prevStep : null);
       if (from!==null) built.floors.forEach((f,i)=>{ if(i>=from){ f.scale.y=.01; anims.push({o:f, t0:performance.now()+(i-from)*140, dur:650}); } });
@@ -946,7 +952,145 @@ function updateSelectionMarker(){
     selOutline.rotation.y = b.group.rotation.y;
     scene.add(selOutline);
   }
+  applyCutaway();
 }
+
+/* ---------- cutaway: lift the floors above the selected one and open it up ---------- */
+const cut = {pid:null, interior:null, board:null};
+const LIFT_F = 1.8;
+const floorMat = new THREE.MeshLambertMaterial({color:0xd9c39e});
+function applyCutaway(){
+  if (cut.interior){ cut.interior.parent && cut.interior.parent.remove(cut.interior); disposeGroup(cut.interior); if (cut.boardTex) cut.boardTex.dispose(); cut.interior=null; cut.board=null; }
+  const p = S.selId && S.projects.get(S.selId);
+  for (const [id,b] of buildings){
+    const active = p && id===p.id && S.selStep < b.info.n;
+    const lift = b.info.h*LIFT_F;
+    b.floors.forEach((fg,i)=>{
+      fg.userData.liftT = active && i>S.selStep ? lift : 0;
+      const open = active && i===S.selStep;
+      (fg.userData.solid||[]).forEach(m=>{ m.visible = !open; });
+    });
+    if (b.roof) b.roof.userData.liftT = active ? lift : 0;
+    if (active){
+      const fg = b.floors[S.selStep];
+      const inter = makeInterior(p, S.selStep, fg);
+      fg.add(inter); cut.interior = inter; cut.pid = id; cut.root = b.group;
+    }
+  }
+}
+function updateLifts(){
+  for (const b of buildings.values()){
+    const list = b.roof ? b.floors.concat([b.roof]) : b.floors;
+    for (const o of list){
+      const t = o.userData.baseY + (o.userData.liftT||0);
+      const dy = t - o.position.y;
+      if (Math.abs(dy) > .005) o.position.y += reduceMotion ? dy : dy*.14;
+    }
+  }
+  if (cut.board){ // the pinboard turns to face the camera
+    const wp = new THREE.Vector3(); cut.board.getWorldPosition(wp);
+    const root = cut.root;
+    cut.board.rotation.y = Math.atan2(camera.position.x-wp.x, camera.position.z-wp.z) - (root ? root.rotation.y : 0);
+  }
+}
+function wrapLines(c, text, maxW, maxLines){
+  const out = [];
+  for (const para of String(text).split(/\n+/)){
+    let line = '';
+    for (const word of para.split(/\s+/)){
+      const t = line ? line+' '+word : word;
+      if (c.measureText(t).width > maxW && line){ out.push(line); line = word; } else line = t;
+      if (out.length >= maxLines) break;
+    }
+    if (line && out.length < maxLines) out.push(line);
+    if (out.length >= maxLines) break;
+  }
+  return out;
+}
+function boardTexture(p, i){
+  const T = TYPES[p.type], sd = p.stepData[i];
+  const cv = document.createElement('canvas'); cv.width = 640; cv.height = 380; const c = cv.getContext('2d');
+  c.fillStyle = '#C9A77A'; c.fillRect(0,0,640,380);           // cork
+  c.fillStyle = '#FBFAF6'; c.fillRect(18,18,604,344);
+  c.fillStyle = T.color; c.fillRect(18,18,604,62);
+  c.fillStyle = '#fff'; c.font = '700 34px Figtree, system-ui, sans-serif';
+  c.fillText(floorTag(i)+' · '+T.steps[i], 36, 62);
+  const status = isRuin(p) ? 'abgebrochen' : i < p.step ? 'erledigt' : i===p.step ? 'im Bau' : 'geplant';
+  c.font = '600 20px Figtree, system-ui, sans-serif'; c.textAlign='right'; c.fillText(status, 604, 58); c.textAlign='left';
+  c.fillStyle = '#1d2733'; c.font = '400 21px Figtree, system-ui, sans-serif';
+  const notes = sd.notes.trim() || (p.desc && i===0 ? p.desc : 'Noch keine Notizen zu diesem Schritt.');
+  const lines = wrapLines(c, notes, 330, 8);
+  lines.forEach((l,k)=>c.fillText(l, 36, 116+k*28));
+  // checklist as sticky notes
+  const cl = sd.checklist.slice(0,6);
+  cl.forEach((it,k)=>{
+    const x = 388 + (k%2)*116, y = 100 + Math.floor(k/2)*86;
+    c.save(); c.translate(x+50,y+38); c.rotate(((k*37)%7-3)*.012);
+    c.fillStyle = it.done ? '#B9E4B5' : '#FFE68A'; c.fillRect(-50,-38,104,78);
+    c.fillStyle = '#2a2a2a'; c.font = '600 14px Figtree, system-ui, sans-serif';
+    wrapLines(c, (it.done?'✓ ':'')+it.t, 92, 3).forEach((l,j)=>c.fillText(l,-44,-16+j*18));
+    c.restore();
+  });
+  if (!cl.length){ c.fillStyle='#8a8f96'; c.font='italic 18px Figtree, system-ui, sans-serif'; c.fillText('Keine Checkliste', 396, 124); }
+  const extra = [];
+  if (sd.images.length) extra.push(sd.images.length+(sd.images.length===1?' Bild':' Bilder'));
+  if (sd.files.length) extra.push(sd.files.length+' STL');
+  if (sd.links.length) extra.push(sd.links.length+(sd.links.length===1?' Link':' Links'));
+  if (sd.checklist.length) extra.push(sd.checklist.filter(x=>x.done).length+'/'+sd.checklist.length+' erledigt');
+  c.fillStyle = '#5b6878'; c.font = '600 18px Figtree, system-ui, sans-serif';
+  c.fillText(extra.join('  ·  '), 36, 344);
+  const t = new THREE.CanvasTexture(cv); t.anisotropy = 4; return t;
+}
+function makeInterior(p, i, fg){
+  const F = FAC[p.type]; const {w,d,h} = F;
+  const g = new THREE.Group();
+  const ruin = isRuin(p), constructing = !ruin && !isDone(p) && i===p.step;
+  const wallMat = fg.userData.wallMat || (ruin ? ruinMat(p.type) : rohbauMat);
+  // walls as inward-facing planes: the walls nearest the camera are culled, so you look straight in
+  if (!(ruin && !(fg.userData.solid||[]).length)){
+    [[0,d/2,Math.PI,w],[0,-d/2,0,w],[w/2,0,-Math.PI/2,d],[-w/2,0,Math.PI/2,d]].forEach(([x,z,ry,len])=>{
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(len,h), ruin ? ruinMat(p.type) : wallMat);
+      m.position.set(x,h/2,z); m.rotation.y = ry; m.receiveShadow = true; g.add(m);
+    });
+  }
+  g.add(box(w-.05,.14,d-.05, ruin?M.soot:constructing?M.concrete:floorMat, 0,.07,0));
+  // pinboard with this step's content
+  const tex = boardTexture(p,i); cut.boardTex = tex;
+  const face = new THREE.MeshLambertMaterial({map:tex, emissive:0xffffff, emissiveMap:tex, emissiveIntensity:.18});
+  const frame = M.trunk;
+  const holder = new THREE.Group(); holder.position.set(0,.14,0); g.add(holder);
+  const bw = Math.min(3.6, w-1.4), bh = bw*380/640;
+  const board = new THREE.Mesh(new THREE.BoxGeometry(bw,bh,.08), [frame,frame,frame,frame,face,face]);
+  board.position.y = Math.min(h-.35-bh/2, .55+bh/2); board.castShadow = true;
+  const bgrp = new THREE.Group(); bgrp.add(board);
+  for (const sx of [-1,1]) bgrp.add(box(.07,board.position.y,.07,M.pole,sx*(bw/2-.2),board.position.y/2,0));
+  holder.add(bgrp); cut.board = bgrp;
+  // furniture
+  if (constructing){
+    for (let k=0;k<3;k++) g.add(box(.7,.35,.45,M.white,-w/2+1+k*.25,.32+k*.36,-d/2+.9));
+    const bucket = new THREE.Mesh(new THREE.CylinderGeometry(.3,.26,.5,10), M.fenceTop); bucket.position.set(w/2-1,.39,d/2-1); g.add(bucket);
+  } else if (ruin){
+    for (let k=0;k<6;k++){ const s=.3+Math.random()*.5; const m=box(s,s*.6,s,M.rubble,(Math.random()-.5)*(w-1.5),.2,(Math.random()-.5)*(d-1.5)); m.rotation.y=Math.random()*3; g.add(m); }
+  } else {
+    const dx = -w/2+1.3, dz = -d/2+1.1;
+    g.add(box(1.8,.08,.9,M.white,dx,.88,dz));
+    for (const [lx,lz] of [[-.8,-.38],[.8,-.38],[-.8,.38],[.8,.38]]) g.add(box(.06,.74,.06,M.pole,dx+lx,.51,dz+lz));
+    g.add(box(.5,.45,.5,M.dark,dx,.38,dz+.8));
+    if (p.type==='druck'){
+      g.add(box(.75,.75,.7,M.dark,dx+.4,1.3,dz));
+      const n = Math.min(3, p.stepData[i].files.length || 1);
+      for (let k=0;k<n;k++){ const o=new THREE.Mesh(new THREE.IcosahedronGeometry(.13,0), new THREE.MeshLambertMaterial({color:0xe36b16})); o.position.set(dx-.6+k*.3,1.0,dz+.1); g.add(o); }
+    } else {
+      g.add(box(.6,.4,.05,M.dark,dx+.3,1.13,dz-.2));
+    }
+    const pot = new THREE.Mesh(new THREE.CylinderGeometry(.22,.17,.4,8), M.brick); pot.position.set(w/2-.6,.34,d/2-.6); g.add(pot);
+    const leaf = new THREE.Mesh(new THREE.IcosahedronGeometry(.45,0), M.shrub); leaf.position.set(w/2-.6,.85,d/2-.6); g.add(leaf);
+  }
+  g.traverse(o=>{ o.userData.pick = {pid:p.id, step:i}; if (o.isMesh){ o.castShadow = o.castShadow && o.geometry.type!=='PlaneGeometry'; } });
+  return g;
+}
+let cutT;
+function refreshCutawaySoon(){ clearTimeout(cutT); cutT = setTimeout(()=>{ if (S.selId) applyCutaway(); }, 350); }
 
 /* ---------- day / night ---------- */
 const COL = { night:new THREE.Color(0x0c1830), day:new THREE.Color(0xbfe2fa), dusk:new THREE.Color(0xf3ad7f) };
@@ -996,9 +1140,13 @@ function flyToProject(id, step){
   const b = buildings.get(id); if(!b) return;
   const i = Math.min(step, b.info.n-1);
   const tgt = new THREE.Vector3(b.info.x, b.info.base + (i+.5)*b.info.h, b.info.z);
-  const dist = 26 + b.info.top*.8;
-  let dir = camera.position.clone().sub(controls.target); dir.y=0; if(dir.lengthSq()<1) dir.set(1,0,1); dir.normalize();
-  const el = .5;
+  const dist = 23;
+  // look from the lot's outer corner: no neighbouring building stands in the way there
+  const p = S.projects.get(id); const sl = SLOTS[((p ? p.lot : 0)%4+4)%4];
+  let dir = new THREE.Vector3(sl[0], 0, sl[1]).normalize();
+  const cur = camera.position.clone().sub(controls.target); cur.y = 0; cur.normalize();
+  if (cur.dot(dir) < -.2) dir.add(cur.multiplyScalar(.25)).normalize();
+  const el = .68;
   flyTo(tgt, tgt.clone().add(new THREE.Vector3(dir.x*Math.cos(el)*dist, Math.sin(el)*dist, dir.z*Math.cos(el)*dist)));
 }
 function flyHome(){
@@ -1065,7 +1213,7 @@ function frame(now){
   requestAnimationFrame(frame);
   const dt = Math.min(.05,(now-last)/1000); last = now;
   if (document.hidden) return;
-  updateFly(now); controls.update(); updateAnims(now); updateCars(dt); updateConfetti(dt); updateViewOffset();
+  updateFly(now); controls.update(); updateAnims(now); updateLifts(); updateCars(dt); updateConfetti(dt); updateViewOffset();
   for (const b of buildings.values()){ const c=b.group.userData.crane; if(c) c.userData.jib.rotation.y = c.userData.phase + Math.sin(now/1000*.18 + c.userData.phase)*1.3; }
   if (selRing.visible){ selRing.material.opacity = .55 + .3*Math.sin(now/300); }
   if (now - lastDN > 30000){ lastDN = now; applyDayNight(); }
