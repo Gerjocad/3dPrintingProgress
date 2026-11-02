@@ -123,6 +123,7 @@ button,input,textarea,select{font:inherit;color:inherit}
 .hist .list{margin-top:6px}
 .vers{margin-top:12px}
 .vers .meta{white-space:normal}
+.rows-inline{display:grid;gap:6px}
 .fl.ruined{background:color-mix(in srgb,#6b6560 22%,var(--surface))}
 .fl.roof{cursor:default;background:transparent;border:0;border-bottom:3px solid var(--tc);border-radius:0;font-weight:700}
 .fl.sel{outline:2px solid var(--fg);outline-offset:-2px}
@@ -317,12 +318,15 @@ const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const lsGet = k => { try { return localStorage.getItem(k); } catch(e){ return null; } };
 const lsSet = (k,v) => { try { localStorage.setItem(k,v); } catch(e){} };
 
-function normalize(p, id){
-  p = p || {};
-  const t = TYPES[p.type] ? p.type : 'allg';
-  const steps = Array.isArray(p.steps) && p.steps.length ? p.steps.map(x=>String(x||'Schritt')) : (TYPES[t].legacy && !(p.mig && p.mig.mw) ? TYPES[t].legacy : TYPES[t].steps).slice();
-  const n = steps.length;
-  const sd = Array.isArray(p.stepData) ? p.stepData : [];
+const ANNEX_STEPS = {
+  druck:['Idee','CAD-Anpassung','Testdruck','Nachbearbeitung','MakerWorld-Upload'],
+  app:['Idee','Konzept','Umsetzung','Testing','Release'],
+  web:['Idee','Design','Umsetzung','Testing','Launch'],
+  video:['Idee','Skript','Dreh','Schnitt','Veröffentlichung'],
+  allg:['Idee','Planung','Umsetzung','Abschluss']
+};
+function normStepData(sd, n){
+  sd = Array.isArray(sd) ? sd : [];
   const stepData = [];
   for (let i=0;i<n;i++){
     const s = sd[i] || {};
@@ -337,6 +341,26 @@ function normalize(p, id){
       history: Array.isArray(s.history) ? s.history.filter(Boolean) : []
     });
   }
+  return stepData;
+}
+// an annex or a branch arm: a building part with its own steps and progress
+function normalizeUnit(u, t){
+  u = u || {};
+  const steps = Array.isArray(u.steps) && u.steps.length ? u.steps.map(x=>String(x||'Schritt')) : ANNEX_STEPS[t].slice();
+  const n = steps.length;
+  return { id: u.id || uid(), kind: u.kind==='arm' ? 'arm' : 'annex', type: t, name: u.name || (u.kind==='arm'?'Zweig':'Anbau'), desc: u.desc || '',
+    steps, stepData: normStepData(u.stepData, n), step: Math.max(0, Math.min(n, Number(u.step)|0)), state:'aktiv',
+    version: Math.max(1, Number(u.version)|0), builtTop: Math.max(0, Math.min(n, Number(u.builtTop)|0)),
+    updates: Array.isArray(u.updates) ? u.updates.filter(Boolean) : [], doneAt: u.doneAt || '', createdAt: u.createdAt || Date.now(),
+    tags:[], priority:'mittel', deadline:'', cover:null };
+}
+function normalize(p, id){
+  p = p || {};
+  const t = TYPES[p.type] ? p.type : 'allg';
+  const steps = Array.isArray(p.steps) && p.steps.length ? p.steps.map(x=>String(x||'Schritt')) : (TYPES[t].legacy && !(p.mig && p.mig.mw) ? TYPES[t].legacy : TYPES[t].steps).slice();
+  const n = steps.length;
+  const stepData = normStepData(p.stepData, n);
+  const br = p.branch && Array.isArray(p.branch.arms) && p.branch.arms.length===2 ? p.branch : null;
   return {
     id: id || p.id || uid(), name: p.name || 'Unbenanntes Projekt', type: t, desc: p.desc || '',
     priority: PRIO[p.priority] ? p.priority : 'mittel', deadline: p.deadline || '',
@@ -349,8 +373,17 @@ function normalize(p, id){
     version: Math.max(1, Number(p.version)|0),
     builtTop: Math.max(0, Math.min(n, Number(p.builtTop)|0)),
     updates: Array.isArray(p.updates) ? p.updates.filter(Boolean) : [],
-    mig: p.mig && typeof p.mig==='object' ? p.mig : {}
+    mig: p.mig && typeof p.mig==='object' ? p.mig : {},
+    annexes: Array.isArray(p.annexes) ? p.annexes.filter(Boolean).map(a=>normalizeUnit(Object.assign({},a,{kind:'annex'}), t)) : [],
+    branch: br ? {at: Math.max(1, Math.min(n, Number(br.at)|0)), createdAt: br.createdAt || '', arms: br.arms.map(a=>normalizeUnit(Object.assign({},a,{kind:'arm'}), t))} : null
   };
+}
+const partOf = (p, part) => !p ? null : !part ? p : part[0]==='a' ? (p.annexes[+part.slice(1)] || null) : (p.branch ? p.branch.arms[+part.slice(1)] || null : null);
+const offOf = (p, part) => part && part[0]==='b' && p && p.branch ? p.branch.at : 0;
+function ownerOf(u){
+  if (S.projects.get(u.id) === u) return u;
+  for (const p of S.projects.values()) if (p.annexes.includes(u) || (p.branch && p.branch.arms.includes(u))) return p;
+  return u;
 }
 const nSteps = p => p.steps.length;
 const stepName = (p,i) => p.steps[i] || '';
@@ -381,19 +414,21 @@ const emptyStep = () => ({notes:'', checklist:[], links:[], images:[], files:[],
 const inUpdate = p => !isDone(p) && !isRuin(p) && p.builtTop > p.step+1;
 const isDone = p => p.step >= nSteps(p);
 const isRuin = p => p.state === 'abgebrochen';
-const statusOf = p => isRuin(p) ? 'ruin' : isDone(p) ? 'done' : 'build';
+const projectDone = p => isDone(p) && (!p.branch || p.branch.arms.every(isDone)) && p.annexes.every(isDone);
+const statusOf = p => isRuin(p) ? 'ruin' : projectDone(p) ? 'done' : 'build';
 
 /* =====================================================================
    Storage: db capability (private to the owner) with a local fallback
    ===================================================================== */
-const S = { projects:new Map(), mode:'loading', selId:null, selStep:0, timeMode: lsGet('ps.time') || 'auto',
+const S = { projects:new Map(), mode:'loading', selId:null, selPart:'', selOff:0, selStep:0, timeMode: lsGet('ps.time') || 'auto',
   q:'', fType:'alle', fState:'alle', loaded:false };
 let db=null, assetsApi=null, downloadsApi=null;
 const pending = new Map();
 const deleted = new Set();
 
 function setSave(txt){ $('#saveState').textContent = txt; }
-function persist(p){
+function persist(u){
+  const p = ownerOf(u);
   p.updatedAt = Date.now();
   S.projects.set(p.id, p);
   if (S.mode === 'db'){
@@ -425,7 +460,7 @@ document.addEventListener('visibilitychange', ()=>{ if (document.hidden) flushAl
 
 async function removeProject(p){
   S.projects.delete(p.id);
-  for (const sd of p.stepData) for (const r of [...sd.images, ...sd.files]) deleteFile(r);
+  for (const u of [p, ...p.annexes, ...(p.branch ? p.branch.arms : [])]) for (const sd of u.stepData) for (const r of [...sd.images, ...sd.files]) deleteFile(r);
   if (p.cover) deleteFile(p.cover);
   if (S.mode === 'db'){
     clearTimeout(pending.get(p.id)); pending.delete(p.id); deleted.add(p.id);
@@ -674,8 +709,9 @@ const M = {
 const box = (w,h,d,mat,x=0,y=0,z=0) => { const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat); m.position.set(x,y,z); m.castShadow=true; m.receiveShadow=true; return m; };
 
 /* ---------- city layout ---------- */
-const P = 30;           // block pitch
-const LOT = 5.6;        // lot offset from block centre
+const P = 43;           // block pitch
+const LOT = 8.6;        // lot offset from block centre
+const INNER = 34.4;     // grass area of a block
 function spiral(n){ let x=0,z=0,dx=1,dz=0,seg=1,pass=0,turns=0; for(let i=0;i<n;i++){ x+=dx; z+=dz; pass++; if(pass===seg){ pass=0; const t=dx; dx=-dz; dz=t; turns++; if(turns%2===0) seg++; } } return [x,z]; }
 const SLOTS = [[-1,-1],[1,-1],[-1,1],[1,1]];
 function lotInfo(i){ const [bx,bz]=spiral(Math.floor(i/4)+1); const [sx,sz]=SLOTS[i%4]; return {x:bx*P+sx*LOT, z:bz*P+sz*LOT, face: sz}; }
@@ -714,25 +750,25 @@ function buildCity(){
   blocks.forEach(([bx,bz],bi)=>{
     const cx=bx*P, cz=bz*P;
     flat(P+7, P+7, M.asphalt, cx, .02, cz);
-    flat(25, 25, M.sidewalk, cx, .05, cz);
-    flat(23, 23, bi===0?M.plaza:M.grass, cx, .08, cz);
+    flat(INNER+2, INNER+2, M.sidewalk, cx, .05, cz);
+    flat(INNER, INNER, bi===0?M.plaza:M.grass, cx, .08, cz);
     // lane dashes on the four surrounding road centre lines
-    for (const s of [-1,1]) for (let k=-3;k<=3;k++){ dashes.push([cx+k*4.2, cz+s*P/2, 0]); dashes.push([cx+s*P/2, cz+k*4.2, 1]); }
-    for (const [sx,sz] of SLOTS) lamps.push([cx+sx*12.9, cz+sz*12.9]);
+    for (const s of [-1,1]) for (let k=-5;k<=5;k++){ dashes.push([cx+k*4.2, cz+s*P/2, 0]); dashes.push([cx+s*P/2, cz+k*4.2, 1]); }
+    for (const [sx,sz] of SLOTS) lamps.push([cx+sx*(INNER/2+1.5), cz+sz*(INNER/2+1.5)]);
     if (bi===0){ // central park with fountain
       const f1 = new THREE.Mesh(new THREE.CylinderGeometry(4.2,4.4,.6,24), M.white); f1.position.set(cx,.35,cz); f1.receiveShadow=true; cityGroup.add(f1);
       const w = new THREE.Mesh(new THREE.CylinderGeometry(3.7,3.7,.1,24), M.water); w.position.set(cx,.66,cz); cityGroup.add(w);
       const f2 = new THREE.Mesh(new THREE.CylinderGeometry(.5,.7,2,10), M.white); f2.position.set(cx,1.4,cz); f2.castShadow=true; cityGroup.add(f2);
-      flat(23,3,M.sidewalk,cx,.1,cz); flat(3,23,M.sidewalk,cx,.1,cz);
-      for (const [sx,sz] of SLOTS){ for(let k=0;k<3;k++) trees.push([cx+sx*(6+R()*4), cz+sz*(6+R()*4), .9+R()*.5, R()<.5?0:1]); }
+      flat(INNER,3,M.sidewalk,cx,.1,cz); flat(3,INNER,M.sidewalk,cx,.1,cz);
+      for (const [sx,sz] of SLOTS){ for(let k=0;k<3;k++) trees.push([cx+sx*(7+R()*9), cz+sz*(7+R()*9), .9+R()*.5, R()<.5?0:1]); }
       return;
     }
     // free lots get trees, occupied lots small corner shrubs
     for (let s=0;s<4;s++){
       const li = (bi-1)*4+s; const [sx,sz]=SLOTS[s];
       const lx=cx+sx*LOT, lz=cz+sz*LOT;
-      if (!occupied.has(li)){ const n=2+Math.floor(R()*3); for(let k=0;k<n;k++) trees.push([lx+(R()-.5)*8, lz+(R()-.5)*8, .7+R()*.6, R()<.55?0:1]); }
-      else { trees.push([lx+sx*4.6, lz-sz*4.6, .55, 1]); }
+      if (!occupied.has(li)){ const n=2+Math.floor(R()*3); for(let k=0;k<n+2;k++) trees.push([lx+(R()-.5)*13, lz+(R()-.5)*13, .7+R()*.6, R()<.55?0:1]); }
+      else { trees.push([lx+sx*7.6, lz-sz*7.6, .6, 1]); trees.push([lx-sx*7.6, lz-sz*7.6, .5, 0]); }
     }
   });
   // lake + surrounding forest
@@ -779,7 +815,7 @@ function buildCity(){
     g.add(body,cab,hl);
     const [bx,bz] = blocks[Math.floor(R()*blocks.length)];
     const dir = R()<.5?1:-1;
-    cars.push({g, cx:bx*P, cz:bz*P, h: dir>0?13.6:16.4, u:R(), dir, speed:(.012+R()*.01)});
+    cars.push({g, cx:bx*P, cz:bz*P, h: dir>0?P/2-1.5:P/2+1.5, u:R(), dir, speed:(.012+R()*.01)});
     carGroup.add(g);
   }
   // shadow frustum covers the city
@@ -803,7 +839,7 @@ function updateCars(dt){
 const buildings = new Map(); // id -> {group, sig, info}
 const anims = []; let confetti = [];
 
-function tagPick(obj, pid, step){ obj.traverse(o=>{ o.userData.pick = {pid, step}; }); }
+function tagPick(obj, pid, step, part){ obj.traverse(o=>{ o.userData.pick = {pid, step, part:part||''}; }); }
 
 function makeScaffold(w,h,d){
   const g = new THREE.Group(); const W=w/2+.7, D=d/2+.7;
@@ -837,8 +873,8 @@ function makeCrane(H, hookY){
   g.userData.jib = jib;
   return g;
 }
-function makeFence(){
-  const g = new THREE.Group(); const r=5.4;
+function makeFence(r){
+  const g = new THREE.Group(); r = r || 5.4;
   for (const s of [-1,1]){ g.add(box(2*r,1.05,.08,M.fence,0,.52,s*r)); g.add(box(.08,1.05,2*r,M.fence,s*r,.52,0));
     g.add(box(2*r,.14,.1,M.fenceTop,0,1.06,s*r)); g.add(box(.1,.14,2*r,M.fenceTop,s*r,1.06,0)); }
   return g;
@@ -875,7 +911,6 @@ function addRoof(root, type, top, F){
   return g;
 }
 
-function buildingSig(p){ return [p.type,p.step,p.state,p.lot,nSteps(p),p.builtTop,p.version,p.stepData.map(x=>x.ver).join('')].join('|'); }
 const VER_COLS = [0xf2f2ef, 0xe36b16, 0x2bb3a3, 0xe8b931, 0xd04c8f, 0x3d8bdb];
 const verMats = {};
 function verMat(v){ const k = v<=1 ? 0 : 1 + (v-2) % (VER_COLS.length-1); return verMats[k] || (verMats[k] = new THREE.MeshLambertMaterial({color:VER_COLS[k]})); }
@@ -883,16 +918,69 @@ const oldMats = {};
 function oldMat(type){ if (oldMats[type]) return oldMats[type]; if (!facadeMaps[type]) facadeMaps[type] = canvasTex(c=>FAC[type].paint(c)); return oldMats[type] = new THREE.MeshLambertMaterial({map:facadeMaps[type], color:0xa3a3a3}); }
 const tarpMat = new THREE.MeshLambertMaterial({color:0x3f9a5c, transparent:true, opacity:.55, depthWrite:false});
 
+/* A tower is one stack of floors for a unit: the main building, an annex or a branch arm. */
+function buildTower(u, type, dims, part, pid, R, opt){
+  const {w,d,h} = dims;
+  const g = new THREE.Group();
+  const n = nSteps(u), done = isDone(u);
+  const count = done ? n : Math.max(u.step+1, u.builtTop);
+  const floors = [];
+  for (let i=0;i<count;i++){
+    const fg = new THREE.Group(); fg.position.y = i*h; g.add(fg);
+    const constructing = !done && i===u.step;
+    const pending = !done && i>u.step;
+    if (pending){
+      const a = box(w,h,d,oldMat(type),0,h/2,0), t = box(w+.45,h-.1,d+.45,tarpMat,0,h/2,0); t.castShadow=false;
+      const l = box(w+.18,.18,d+.18,verMat(u.stepData[i].ver),0,h,0);
+      fg.add(a,t,l); fg.userData.solid=[a,t,l]; fg.userData.wallMat=oldMat(type);
+      for (const sx of [-1,1]) for (const sz of [-1,1]) fg.add(box(.12,h+.2,.12,M.scaffold,sx*(w/2+.35),h/2,sz*(d/2+.35)));
+    } else if (constructing){
+      const a = box(w-.1,h,d-.1,rohbauMat,0,h/2,0), b = box(w+.1,.18,d+.1,M.concrete,0,h,0);
+      fg.add(a,b); fg.userData.solid=[a,b]; fg.userData.wallMat=rohbauMat;
+      fg.add(makeScaffold(w,h,d));
+    } else {
+      const fm = facadeMat(type, (i + (R()*4|0))%4);
+      const sol = [box(w,h,d,fm,0,h/2,0)];
+      const v = u.stepData[i].ver;
+      if (type!=='app' || v>1) sol.push(box(w+.18,v>1?.3:.18,d+.18,verMat(v),0,h,0));
+      if (i===0 && opt.door){ sol.push(box(Math.min(1.5,w*.3),2.1,.12,M.dark,0,1.05,d/2+.03)); }
+      sol.forEach(m=>fg.add(m)); fg.userData.solid=sol; fg.userData.wallMat=fm;
+      if (i===0 && opt.door) fg.add(box(Math.min(2.4,w*.45),.12,1,M.ledge,0,2.3,d/2+.5));
+    }
+    fg.userData.baseY = fg.position.y; tagPick(fg,pid,i,part); floors.push(fg);
+  }
+  const top = count*h;
+  let roof = null;
+  if (opt.roof && (done || u.builtTop >= n)){
+    roof = addRoof(g,type,top,dims); roof.userData.baseY = top;
+    if (u.version > 1){
+      roof.add(box(.09,3.2,.09,M.pole,-w/2+.5,1.6,d/2-.5));
+      const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.3,.75), verMat(u.version)); flag.material.side = THREE.DoubleSide;
+      flag.position.set(-w/2+.5+.68,2.8,d/2-.5); roof.add(flag);
+    }
+    tagPick(roof,pid,n-1,part);
+  }
+  return {group:g, floors, roof, top, done};
+}
+
+function buildingSig(p){
+  const us = u => [u.step,nSteps(u),u.builtTop,u.version,u.stepData.map(x=>x.ver).join('')].join(':');
+  return [p.type,p.state,p.lot,us(p), p.annexes.map(us).join(','), p.branch ? p.branch.at+'/'+p.branch.arms.map(us).join(',') : ''].join('|');
+}
+const ANNEX_SLOTS = [[1,0],[-1,0],[0,-1]];
+const maxAnnexes = p => p.branch ? 1 : ANNEX_SLOTS.length;
+
 function buildBuilding(p){
   const F = FAC[p.type]; const {w,d,h} = F;
   const L = lotInfo(p.lot);
-  const root = new THREE.Group(); root.position.set(L.x,0,L.z); root.rotation.y = L.face>0 ? 0 : Math.PI;
+  const root = new THREE.Group();
   const base = .35;
-  const found = box(w+.8,base,d+.8,M.concrete,0,base/2,0); root.add(found);
-  const n = nSteps(p), done = isDone(p), ruin = isRuin(p);
-  const floors = [];
   const R = rng(hashStr(p.id));
-  if (ruin){
+  const parts = {};
+  let ringR = 7.2;
+  if (isRuin(p)){
+    root.add(box(w+.8,base,d+.8,M.concrete,0,base/2,0));
+    const floors = [];
     const count = Math.max(1, p.step);
     for (let i=0;i<count;i++){
       const fg = new THREE.Group(); fg.position.y = base + i*h; root.add(fg);
@@ -907,57 +995,84 @@ function buildBuilding(p){
           const z = side===1? along : side===3? along : (side===0? d/2-.15 : -d/2+.15);
           const m = box(side%2?.3:ww, hh, side%2?ww:.3, ruinMat(p.type), x, hh/2, z); m.rotation.z=(R()-.5)*.25; fg.add(m); }
       }
-      fg.userData.baseY = fg.position.y; tagPick(fg,p.id,i); floors.push(fg);
+      fg.userData.baseY = fg.position.y; floors.push(fg);
     }
     for (let k=0;k<14;k++){ const s=.3+R()*.9; const m=box(s,s*.6,s,k%3?M.rubble:M.soot,(R()-.5)*(w+3),s*.3,(R()-.5)*(d+3)); m.rotation.set(R(),R()*3,R()); root.add(m); }
-    const burn = new THREE.Mesh(new THREE.CircleGeometry(5.6,20), M.soot); burn.rotation.x=-Math.PI/2; burn.position.y=.12; burn.material=M.soot; root.add(burn);
-    tagPick(root,p.id,count-1); floors.forEach((f,i)=>tagPick(f,p.id,i));
-    return {root, floors, roof:null, info:{x:L.x,z:L.z,base,h,n:count,top:base+count*h}};
+    const burn = new THREE.Mesh(new THREE.CircleGeometry(5.6,20), M.soot); burn.rotation.x=-Math.PI/2; burn.position.y=.12; root.add(burn);
+    tagPick(root,p.id,count-1,''); floors.forEach((f,i)=>tagPick(f,p.id,i,''));
+    parts[''] = {floors, roof:null, dims:F, extra:[]};
+    root.position.set(L.x,0,L.z); root.rotation.y = L.face>0 ? 0 : Math.PI;
+    return {root, parts, scale:1, ringR, top:base+count*h};
   }
-  const count = done ? n : Math.max(p.step+1, p.builtTop);
-  for (let i=0;i<count;i++){
-    const fg = new THREE.Group(); fg.position.y = base + i*h; root.add(fg);
-    const constructing = !done && i===p.step;
-    const pending = !done && i>p.step;   // still standing from the old version, waiting for its update
-    if (pending){
-      const a = box(w,h,d,oldMat(p.type),0,h/2,0), t = box(w+.45,h-.1,d+.45,tarpMat,0,h/2,0); t.castShadow=false;
-      const l = box(w+.18,.18,d+.18,verMat(p.stepData[i].ver),0,h,0);
-      fg.add(a,t,l); fg.userData.solid=[a,t,l]; fg.userData.wallMat=oldMat(p.type);
-      for (const sx of [-1,1]) for (const sz of [-1,1]){ const pole=box(.12,h+.2,.12,M.scaffold,sx*(w/2+.35),h/2,sz*(d/2+.35)); fg.add(pole); }
-    } else if (constructing){
-      const a = box(w-.1,h,d-.1,rohbauMat,0,h/2,0), b = box(w+.1,.18,d+.1,M.concrete,0,h,0);
-      fg.add(a,b); fg.userData.solid=[a,b]; fg.userData.wallMat=rohbauMat;
-      fg.add(makeScaffold(w,h,d));
-    } else {
-      const fm = facadeMat(p.type, (i + (R()*4|0))%4);
-      const sol = [box(w,h,d,fm,0,h/2,0)];
-      const v = p.stepData[i].ver;
-      if (p.type!=='app' || v>1) sol.push(box(w+.18,v>1?.3:.18,d+.18,verMat(v),0,h,0));
-      if (i===0){ sol.push(box(1.5,2.1,.12,M.dark,0,1.05,d/2+.03)); }
-      sol.forEach(m=>fg.add(m)); fg.userData.solid=sol; fg.userData.wallMat=fm;
-      if (i===0) fg.add(box(2.4,.12,1,M.ledge,0,2.3,d/2+.5));
+  const cg = new THREE.Group(); root.add(cg);
+  const cons = [];   // towers that are building sites right now
+  // main building
+  const main = buildTower(p, p.type, F, '', p.id, R, {door:true, roof:!p.branch});
+  main.group.position.y = base; cg.add(main.group);
+  const fnd = box(w+.8,base,d+.8,M.concrete,0,base/2,0); tagPick(fnd,p.id,0,''); cg.add(fnd);
+  parts[''] = {floors:main.floors, roof:main.roof, dims:F, extra:[]};
+  if (!main.done) cons.push({part:'', u:p, x:0, z:0, top:base+main.top});
+  let topY = base + main.top;
+  // branch: a wide slab on columns, two towers grow on top
+  if (p.branch){
+    const tw = w*.78, td = d*.95, gap = .8, W2 = 2*tw+gap;
+    const y0 = base + main.top;
+    const bg = new THREE.Group(); bg.position.y = y0; bg.userData.baseY = y0; cg.add(bg);
+    const slab = box(W2+.5,.5,d+.5,M.concrete,0,.25,0); bg.add(slab);
+    bg.add(box(W2+.62,.16,d+.62,verMat(2),0,.5,0));
+    tagPick(bg,p.id,Math.max(0,nSteps(p)-1),'');
+    for (const sx of [-1,1]) for (const sz of [-1,1]){
+      const col = new THREE.Mesh(new THREE.CylinderGeometry(.28,.34,y0,10), M.concrete);
+      col.position.set(sx*(W2/2-.05), y0/2, sz*(d/2-.05)); col.castShadow = true; tagPick(col,p.id,0,''); cg.add(col);
+      const foot = box(.9,.25,.9,M.concrete,sx*(W2/2-.05),.12,sz*(d/2-.05)); tagPick(foot,p.id,0,''); cg.add(foot);
     }
-    fg.userData.baseY = fg.position.y; tagPick(fg,p.id,i); floors.push(fg);
+    p.branch.arms.forEach((a,k)=>{
+      const part = 'b'+k, dims = {w:tw, d:td, h};
+      const t = buildTower(a, p.type, dims, part, p.id, R, {door:false, roof:true});
+      const x = (k?1:-1)*(tw/2+gap/2);
+      t.group.position.set(x,.5,0); bg.add(t.group);
+      parts[part] = {floors:t.floors, roof:t.roof, dims, extra:[]};
+      if (!t.done) cons.push({part, u:a, x, z:0, top:y0+.5+t.top});
+      topY = Math.max(topY, y0+.5+t.top);
+    });
+    parts[''].extra = [bg];
   }
-  const top = base + count*h;
-  let roof = null;
-  if (done || p.builtTop >= n){
-    roof = addRoof(root,p.type,top,F); roof.userData.baseY = top;
-    if (p.version > 1){ // version flag on the roof
-      roof.add(box(.09,3.2,.09,M.pole,-w/2+.5,1.6,d/2-.5));
-      const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.3,.75), verMat(p.version)); flag.material.side = THREE.DoubleSide;
-      flag.position.set(-w/2+.5+.68,2.8,d/2-.5); roof.add(flag);
-    }
-    tagPick(roof,p.id,n-1);
-  }
-  if (!done){
-    const fence = makeFence(); tagPick(fence,p.id,p.step); root.add(fence);
-    const crane = makeCrane(top+6, top+1.2); crane.position.set(w/2+1.7,0,-d/2-1.5); crane.userData.phase=R()*6; tagPick(crane,p.id,p.step); root.add(crane);
+  // annexes: smaller update buildings attached to the main building
+  p.annexes.forEach((a,k)=>{
+    if (k >= maxAnnexes(p)) return;
+    const part = 'a'+k, dims = {w:w*.62, d:d*.8, h:h*.9};
+    const [sx,sz] = p.branch ? [0,-1] : ANNEX_SLOTS[k];
+    const x = sx ? sx*(w/2+dims.w/2) : 0;
+    const z = sz ? sz*(d/2+dims.d/2) : (d/2-dims.d/2);
+    const t = buildTower(a, p.type, dims, part, p.id, R, {door:true, roof:true});
+    t.group.position.set(x,base,z); cg.add(t.group);
+    const f2 = box(dims.w+.6,base,dims.d+.6,M.concrete,x,base/2,z); tagPick(f2,p.id,0,part); cg.add(f2);
+    parts[part] = {floors:t.floors, roof:t.roof, dims, extra:[]};
+    if (!t.done) cons.push({part, u:a, x, z, top:base+t.top});
+    topY = Math.max(topY, base+t.top);
+  });
+  // fit everything onto the lot
+  cg.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(cg);
+  const cx = (bb.min.x+bb.max.x)/2, cz = (bb.min.z+bb.max.z)/2;
+  const half = Math.max(bb.max.x-cx, bb.max.z-cz, 4);
+  const s = Math.min(1, 7.6/half);
+  cg.scale.setScalar(s); cg.position.set(-cx*s, 0, -cz*s);
+  ringR = half*s + 1.2;
+  if (cons.length){
+    const fence = makeFence(half*s+.8); const c0 = cons[0];
+    tagPick(fence,p.id,c0.u.step,c0.part); root.add(fence);
+    const H = Math.max(...cons.map(c=>c.top)) + 6;
+    const crane = makeCrane(H, c0.top+1.2);
+    crane.position.set(bb.max.x+1.5, 0, bb.min.z-1.3); crane.userData.phase = R()*6;
+    tagPick(crane,p.id,c0.u.step,c0.part); cg.add(crane);
     root.userData.crane = crane;
   }
-  tagPick(found,p.id,0);
-  return {root, floors, roof, info:{x:L.x,z:L.z,base,h,n:count,top}};
+  root.position.set(L.x,0,L.z); root.rotation.y = L.face>0 ? 0 : Math.PI;
+  return {root, parts, scale:s, ringR, top:topY*s};
 }
+
+function partSteps(p){ const o = {'':p.step}; p.annexes.forEach((a,k)=>o['a'+k]=a.step); if (p.branch) p.branch.arms.forEach((a,k)=>o['b'+k]=a.step); return o; }
 
 function syncBuildings(){
   buildCity();
@@ -969,24 +1084,29 @@ function syncBuildings(){
     const built = buildBuilding(p);
     if (old){ bldGroup.remove(old.group); disposeGroup(old.group); }
     bldGroup.add(built.root);
-    const prevStep = old ? old.step : null;
-    buildings.set(p.id, {group:built.root, floors:built.floors, roof:built.roof, sig, info:built.info, step:p.step, state:p.state});
+    const steps = partSteps(p), doneNow = projectDone(p);
+    buildings.set(p.id, Object.assign(built, {group:built.root, sig, steps, state:p.state, done:doneNow}));
     if (!reduceMotion && S.loaded){
-      const from = !old ? 0 : (old.state===p.state && p.step>prevStep ? prevStep : null);
-      if (from!==null) built.floors.forEach((f,i)=>{ if(i>=from && (!old || i<=p.step)){ f.scale.y=.01; anims.push({o:f, t0:performance.now()+(i-from)*140, dur:650}); } });
-      if (old && old.state===p.state && isDone(p) && prevStep < nSteps(p)) burst(built.info);
+      let k = 0;
+      for (const [part, pt] of Object.entries(built.parts)){
+        const was = old ? old.steps[part] : undefined;
+        const from = !old ? 0 : (was === undefined ? 0 : (old.state===p.state && steps[part] > was ? was : null));
+        if (from===null) continue;
+        pt.floors.forEach((f,i)=>{ if (i>=from && (!old || i<=steps[part])){ f.scale.y=.01; anims.push({o:f, t0:performance.now()+(k++)*140, dur:650}); } });
+      }
+      if (old && old.state===p.state && doneNow && !old.done) burst(built.root.position, built.top);
     }
   }
   for (const [id,b] of buildings) if (!seen.has(id)){ bldGroup.remove(b.group); disposeGroup(b.group); buildings.delete(id); }
   updateSelectionMarker();
 }
 
-function burst(info){
-  const n=180, g=new THREE.BufferGeometry(), pos=new Float32Array(n*3), col=new Float32Array(n*3), vel=[];
+function burst(pos, top){
+  const n=180, g=new THREE.BufferGeometry(), arr=new Float32Array(n*3), col=new Float32Array(n*3), vel=[];
   const cs=[0xe36b16,0xf2b705,0x3d8bdb,0x4e9e6d,0xd8343a,0xffffff].map(c=>new THREE.Color(c));
-  for(let i=0;i<n;i++){ pos[i*3]=info.x; pos[i*3+1]=info.top+1; pos[i*3+2]=info.z; const c=cs[i%cs.length]; col.set([c.r,c.g,c.b],i*3);
+  for(let i=0;i<n;i++){ arr[i*3]=pos.x; arr[i*3+1]=top+1; arr[i*3+2]=pos.z; const c=cs[i%cs.length]; col.set([c.r,c.g,c.b],i*3);
     const a=Math.random()*Math.PI*2, s=4+Math.random()*9; vel.push([Math.cos(a)*s*.5, 8+Math.random()*10, Math.sin(a)*s*.5]); }
-  g.setAttribute('position',new THREE.BufferAttribute(pos,3)); g.setAttribute('color',new THREE.BufferAttribute(col,3));
+  g.setAttribute('position',new THREE.BufferAttribute(arr,3)); g.setAttribute('color',new THREE.BufferAttribute(col,3));
   const m = new THREE.Points(g,new THREE.PointsMaterial({size:.55,vertexColors:true,transparent:true,opacity:1}));
   scene.add(m); confetti.push({m,vel,t:0});
 }
@@ -1003,19 +1123,18 @@ function updateAnims(now){
 /* ---------- selection marker ---------- */
 const selRing = new THREE.Mesh(new THREE.RingGeometry(6.3,6.9,48), M.sel); selRing.rotation.x=-Math.PI/2; selRing.visible=false; scene.add(selRing);
 let selOutline = null;
+const selPart = b => b && (b.parts[S.selPart] || b.parts['']);
 function updateSelectionMarker(){
-  if (selOutline){ scene.remove(selOutline); selOutline.geometry.dispose(); selOutline=null; }
+  if (selOutline){ if (selOutline.parent) selOutline.parent.remove(selOutline); selOutline.geometry.dispose(); selOutline=null; }
   const b = S.selId && buildings.get(S.selId);
-  if (!b){ selRing.visible=false; return; }
-  selRing.visible = true; selRing.position.set(b.info.x,.15,b.info.z);
-  const p = S.projects.get(S.selId); if(!p) return;
-  if (S.selStep < b.info.n){
-    const F = FAC[p.type];
-    const g = new THREE.EdgesGeometry(new THREE.BoxGeometry(F.w+.5, b.info.h+.1, F.d+.5));
-    selOutline = new THREE.LineSegments(g, new THREE.LineBasicMaterial({color:0xe36b16}));
-    selOutline.position.set(b.info.x, b.info.base + S.selStep*b.info.h + b.info.h/2, b.info.z);
-    selOutline.rotation.y = b.group.rotation.y;
-    scene.add(selOutline);
+  if (!b){ selRing.visible=false; applyCutaway(); return; }
+  selRing.visible = true; selRing.position.set(b.root.position.x,.15,b.root.position.z); selRing.scale.setScalar(b.ringR/6.6);
+  const pt = selPart(b);
+  if (pt && S.selStep < pt.floors.length){
+    const {w,d,h} = pt.dims;
+    selOutline = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(w+.5, h+.1, d+.5)), new THREE.LineBasicMaterial({color:0xe36b16}));
+    selOutline.position.y = h/2;
+    pt.floors[S.selStep].add(selOutline);
   }
   applyCutaway();
 }
@@ -1028,28 +1147,34 @@ function applyCutaway(){
   if (cut.interior){ cut.interior.parent && cut.interior.parent.remove(cut.interior); disposeGroup(cut.interior); if (cut.boardTex) cut.boardTex.dispose(); cut.interior=null; cut.board=null; }
   const p = S.selId && S.projects.get(S.selId);
   for (const [id,b] of buildings){
-    const active = p && id===p.id && S.selStep < b.info.n;
-    const lift = b.info.h*LIFT_F;
-    b.floors.forEach((fg,i)=>{
-      fg.userData.liftT = active && i>S.selStep ? lift : 0;
-      const open = active && i===S.selStep;
-      (fg.userData.solid||[]).forEach(m=>{ m.visible = !open; });
-    });
-    if (b.roof) b.roof.userData.liftT = active ? lift : 0;
-    if (active){
-      const fg = b.floors[S.selStep];
-      const inter = makeInterior(p, S.selStep, fg);
-      fg.add(inter); cut.interior = inter; cut.pid = id; cut.root = b.group;
+    for (const [part, pt] of Object.entries(b.parts)){
+      const active = p && id===p.id && part===(b.parts[S.selPart] ? S.selPart : '') && S.selStep < pt.floors.length;
+      const lift = pt.dims.h*LIFT_F;
+      pt.floors.forEach((fg,i)=>{
+        fg.userData.liftT = active && i>S.selStep ? lift : 0;
+        const open = active && i===S.selStep;
+        (fg.userData.solid||[]).forEach(m=>{ m.visible = !open; });
+      });
+      if (pt.roof) pt.roof.userData.liftT = active ? lift : 0;
+      pt.extra.forEach(o=>{ o.userData.liftT = active ? lift : 0; });
+      if (active){
+        const u = partOf(p, part) || p;
+        const fg = pt.floors[S.selStep];
+        const inter = makeInterior(u, S.selStep, fg, pt.dims, offOf(p,part), part, p.id);
+        fg.add(inter); cut.interior = inter; cut.pid = id; cut.root = b.group;
+      }
     }
   }
 }
 function updateLifts(){
   for (const b of buildings.values()){
-    const list = b.roof ? b.floors.concat([b.roof]) : b.floors;
-    for (const o of list){
-      const t = o.userData.baseY + (o.userData.liftT||0);
-      const dy = t - o.position.y;
-      if (Math.abs(dy) > .005) o.position.y += reduceMotion ? dy : dy*.14;
+    for (const pt of Object.values(b.parts)){
+      const list = pt.floors.concat(pt.roof ? [pt.roof] : [], pt.extra);
+      for (const o of list){
+        const t = o.userData.baseY + (o.userData.liftT||0);
+        const dy = t - o.position.y;
+        if (Math.abs(dy) > .005) o.position.y += reduceMotion ? dy : dy*.14;
+      }
     }
   }
   if (cut.board){ // the pinboard turns to face the camera
@@ -1072,21 +1197,20 @@ function wrapLines(c, text, maxW, maxLines){
   }
   return out;
 }
-function boardTexture(p, i){
+function boardTexture(p, i, off){
   const T = TYPES[p.type], sd = p.stepData[i];
   const cv = document.createElement('canvas'); cv.width = 640; cv.height = 380; const c = cv.getContext('2d');
   c.fillStyle = '#C9A77A'; c.fillRect(0,0,640,380);           // cork
   c.fillStyle = '#FBFAF6'; c.fillRect(18,18,604,344);
   c.fillStyle = T.color; c.fillRect(18,18,604,62);
   c.fillStyle = '#fff'; c.font = '700 34px Figtree, system-ui, sans-serif';
-  c.fillText(floorTag(i)+' · '+stepName(p,i), 36, 62);
+  c.fillText(floorTag(i+off)+' · '+stepName(p,i), 36, 62);
   const status = isRuin(p) ? 'abgebrochen' : i < p.step ? 'erledigt' : i===p.step ? 'im Bau' : 'geplant';
   c.font = '600 20px Figtree, system-ui, sans-serif'; c.textAlign='right'; c.fillText(status, 604, 58); c.textAlign='left';
   c.fillStyle = '#1d2733'; c.font = '400 21px Figtree, system-ui, sans-serif';
   const notes = sd.notes.trim() || (p.desc && i===0 ? p.desc : 'Noch keine Notizen zu diesem Schritt.');
   const lines = wrapLines(c, notes, 330, 8);
   lines.forEach((l,k)=>c.fillText(l, 36, 116+k*28));
-  // checklist as sticky notes
   const cl = sd.checklist.slice(0,6);
   cl.forEach((it,k)=>{
     const x = 388 + (k%2)*116, y = 100 + Math.floor(k/2)*86;
@@ -1106,12 +1230,11 @@ function boardTexture(p, i){
   c.fillText(extra.join('  ·  '), 36, 344);
   const t = new THREE.CanvasTexture(cv); t.anisotropy = 4; return t;
 }
-function makeInterior(p, i, fg){
-  const F = FAC[p.type]; const {w,d,h} = F;
+function makeInterior(p, i, fg, dims, off, part, pid){
+  const {w,d,h} = dims;
   const g = new THREE.Group();
   const ruin = isRuin(p), constructing = !ruin && !isDone(p) && i===p.step;
   const wallMat = fg.userData.wallMat || (ruin ? ruinMat(p.type) : rohbauMat);
-  // walls as inward-facing planes: the walls nearest the camera are culled, so you look straight in
   if (!(ruin && !(fg.userData.solid||[]).length)){
     [[0,d/2,Math.PI,w],[0,-d/2,0,w],[w/2,0,-Math.PI/2,d],[-w/2,0,Math.PI/2,d]].forEach(([x,z,ry,len])=>{
       const m = new THREE.Mesh(new THREE.PlaneGeometry(len,h), ruin ? ruinMat(p.type) : wallMat);
@@ -1119,18 +1242,16 @@ function makeInterior(p, i, fg){
     });
   }
   g.add(box(w-.05,.14,d-.05, ruin?M.soot:constructing?M.concrete:floorMat, 0,.07,0));
-  // pinboard with this step's content
-  const tex = boardTexture(p,i); cut.boardTex = tex;
+  const tex = boardTexture(p,i,off); cut.boardTex = tex;
   const face = new THREE.MeshLambertMaterial({map:tex, emissive:0xffffff, emissiveMap:tex, emissiveIntensity:.18});
   const frame = M.trunk;
   const holder = new THREE.Group(); holder.position.set(0,.14,0); g.add(holder);
-  const bw = Math.min(3.6, w-1.4), bh = bw*380/640;
+  const bw = Math.min(3.6, w-1.2), bh = bw*380/640;
   const board = new THREE.Mesh(new THREE.BoxGeometry(bw,bh,.08), [frame,frame,frame,frame,face,face]);
   board.position.y = Math.min(h-.35-bh/2, .55+bh/2); board.castShadow = true;
   const bgrp = new THREE.Group(); bgrp.add(board);
   for (const sx of [-1,1]) bgrp.add(box(.07,board.position.y,.07,M.pole,sx*(bw/2-.2),board.position.y/2,0));
   holder.add(bgrp); cut.board = bgrp;
-  // furniture
   if (constructing){
     for (let k=0;k<3;k++) g.add(box(.7,.35,.45,M.white,-w/2+1+k*.25,.32+k*.36,-d/2+.9));
     const bucket = new THREE.Mesh(new THREE.CylinderGeometry(.3,.26,.5,10), M.fenceTop); bucket.position.set(w/2-1,.39,d/2-1); g.add(bucket);
@@ -1151,7 +1272,7 @@ function makeInterior(p, i, fg){
     const pot = new THREE.Mesh(new THREE.CylinderGeometry(.22,.17,.4,8), M.brick); pot.position.set(w/2-.6,.34,d/2-.6); g.add(pot);
     const leaf = new THREE.Mesh(new THREE.IcosahedronGeometry(.45,0), M.shrub); leaf.position.set(w/2-.6,.85,d/2-.6); g.add(leaf);
   }
-  g.traverse(o=>{ o.userData.pick = {pid:p.id, step:i}; if (o.isMesh){ o.castShadow = o.castShadow && o.geometry.type!=='PlaneGeometry'; } });
+  g.traverse(o=>{ o.userData.pick = {pid, step:i, part}; if (o.isMesh){ o.castShadow = o.castShadow && o.geometry.type!=='PlaneGeometry'; } });
   return g;
 }
 let cutT;
@@ -1201,10 +1322,15 @@ function flyTo(tgt, pos, dur=1100){
   fly = {t0:performance.now(), dur, fp:camera.position.clone(), tp:pos, ft:controls.target.clone(), tt:tgt};
   controls.enabled = false;
 }
-function flyToProject(id, step){
+function flyToProject(id, step, part){
   const b = buildings.get(id); if(!b) return;
-  const i = Math.min(step, b.info.n-1);
-  const tgt = new THREE.Vector3(b.info.x, b.info.base + (i+.5)*b.info.h, b.info.z);
+  const pt = b.parts[part||''] || b.parts['']; if (!pt || !pt.floors.length) return;
+  const i = Math.max(0, Math.min(step, pt.floors.length-1));
+  const fg = pt.floors[i];
+  // where the floor sits once all lifted parts have settled
+  let lifted = 0; for (let o=fg; o && o!==b.root; o=o.parent){ if (o.userData.baseY!==undefined) lifted += o.position.y - o.userData.baseY - (o===fg ? 0 : 0); }
+  const tgt = new THREE.Vector3(); fg.getWorldPosition(tgt);
+  tgt.y += (pt.dims.h/2 - lifted) * b.scale;
   const dist = 23;
   // look from the lot's outer corner: no neighbouring building stands in the way there
   const p = S.projects.get(id); const sl = SLOTS[((p ? p.lot : 0)%4+4)%4];
@@ -1255,7 +1381,7 @@ canvas.addEventListener('pointerup', e=>{
   if (!down) return; const moved = Math.hypot(e.clientX-down.x, e.clientY-down.y); down=null;
   if (moved > 6) return;
   const pk = pickAt(e.clientX, e.clientY);
-  if (pk) openProject(pk.pid, pk.step, true);
+  if (pk) openProject(pk.pid, pk.step, pk.part);
 });
 let hoverReq = null;
 canvas.addEventListener('pointermove', e=>{
@@ -1264,8 +1390,8 @@ canvas.addEventListener('pointermove', e=>{
   hoverReq = requestAnimationFrame(()=>{ hoverReq=null;
     const pk = down ? null : pickAt(e.clientX, e.clientY); const tt = $('#tooltip');
     if (pk && S.projects.has(pk.pid)){
-      const p = S.projects.get(pk.pid);
-      tt.innerHTML = esc(p.name)+'<small>'+floorTag(pk.step)+' · '+esc(stepName(p,pk.step))+'</small>';
+      const p = S.projects.get(pk.pid), u = partOf(p, pk.part) || p;
+      tt.innerHTML = esc(p.name)+(u!==p?' · '+esc(u.name):'')+'<small>'+floorTag(pk.step+offOf(p,pk.part))+' · '+esc(stepName(u,pk.step))+'</small>';
       tt.style.left = e.clientX+'px'; tt.style.top = e.clientY+'px'; tt.hidden=false; canvas.style.cursor='pointer';
     } else { tt.hidden=true; canvas.style.cursor=''; }
   });
@@ -1301,12 +1427,15 @@ function deadlineInfo(p){
   if (diff === 0) return {txt:'Deadline heute', late:true};
   return {txt:'Deadline in '+diff+(diff===1?' Tag':' Tagen'), late:false};
 }
-function statusChip(p){
+function statusChip(p, off){
+  off = off || 0;
   const n = nSteps(p);
+  if (p.branch && !isRuin(p)){ const a=p.branch.arms; return projectDone(p) ? '<span class="chip done">Fertig · 2 Zweige</span>' : '<span class="chip build">Verzweigt · '+a.filter(isDone).length+'/2 Zweige fertig</span>'; }
+  if (!isRuin(p) && isDone(p) && p.annexes && p.annexes.some(a=>!isDone(a))) return '<span class="chip build">Anbau im Bau</span>';
   if (isRuin(p)) return '<span class="chip ruin">Ruine · bei '+esc(stepName(p,Math.min(p.step,n-1)))+' abgebrochen</span>';
   if (isDone(p)) return '<span class="chip done">Fertig'+(p.doneAt?' seit '+fmtDate(p.doneAt):'')+'</span>';
-  if (inUpdate(p)) return '<span class="chip build">Umbau v'+p.version+' · '+floorTag(p.step)+' von '+n+'</span>';
-  return '<span class="chip build">Baustelle · '+floorTag(p.step)+' von '+n+'</span>';
+  if (inUpdate(p)) return '<span class="chip build">Umbau v'+p.version+' · '+floorTag(p.step+off)+' von '+(n+off)+'</span>';
+  return '<span class="chip build">Baustelle · '+floorTag(p.step+off)+' von '+(n+off)+'</span>';
 }
 
 function updateStats(){
@@ -1324,6 +1453,7 @@ function dataChanged(){
   updateStats();
   if ($('#drawer').hidden===false) renderList();
   if (S.selId && !S.projects.has(S.selId)) closePanel();
+  else if (S.selId && S.selPart && !partOf(S.projects.get(S.selId), S.selPart)){ S.selPart=''; S.selOff=0; S.selStep=0; renderPanel(); }
   else if (S.selId){
     const a = document.activeElement;
     if (a && $('#panel').contains(a) && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) panelDirty = true; else renderPanel();
@@ -1332,13 +1462,16 @@ function dataChanged(){
 $('#panel').addEventListener('focusout', ()=>{ setTimeout(()=>{ if(panelDirty && !$('#panel').contains(document.activeElement)){ panelDirty=false; renderPanel(); } }, 50); });
 
 /* ---------- panel ---------- */
-function openProject(id, step, fromScene){
+function openProject(id, step, part){
   const p = S.projects.get(id); if(!p) return;
+  part = typeof part==='string' && partOf(p, part) ? part : '';
+  const u = partOf(p, part);
   // remember where the camera was before going into a building, to return there on close
   if (!S.selId){ const v = fly ? {pos:fly.tp.clone(), tgt:fly.tt.clone()} : {pos:camera.position.clone(), tgt:controls.target.clone()}; S.returnView = v.pos.distanceTo(v.tgt) > 45 ? v : null; }
-  S.selId = id; S.selStep = step==null ? Math.min(p.step, nSteps(p)-1) : step;
+  S.selId = id; S.selPart = part; S.selOff = offOf(p, part);
+  S.selStep = step==null ? Math.min(u.step, nSteps(u)-1) : Math.min(step, nSteps(u)-1);
   const panel = $('#panel'); panel.classList.add('open'); document.body.classList.add('panel-open'); panel.setAttribute('aria-hidden','false');
-  renderPanel(); updateSelectionMarker(); flyToProject(id, S.selStep);
+  renderPanel(); updateSelectionMarker(); flyToProject(id, S.selStep, part);
   $('#tooltip').hidden = true;
   $('#drawer').hidden = true;
   $('#panelBody').scrollTop = 0;
@@ -1350,28 +1483,44 @@ function closePanel(){
     const b = buildings.get(wasId);
     if (S.returnView) flyTo(S.returnView.tgt.clone(), S.returnView.pos.clone(), 1200);
     else if (b){
-      const tgt = new THREE.Vector3(b.info.x, b.info.top*.45, b.info.z);
+      const tgt = new THREE.Vector3(b.root.position.x, b.top*.45, b.root.position.z);
       let dir = camera.position.clone().sub(controls.target); dir.y = 0; if (dir.lengthSq()<1) dir.set(1,0,1); dir.normalize();
-      const dist = 55 + b.info.top*1.2, el = .55;
+      const dist = 55 + b.top*1.2, el = .55;
       flyTo(tgt, tgt.clone().add(new THREE.Vector3(dir.x*Math.cos(el)*dist, Math.sin(el)*dist, dir.z*Math.cos(el)*dist)), 1200);
     }
     S.returnView = null;
   }
-  S.selId = null; const panel=$('#panel'); panel.classList.remove('open'); document.body.classList.remove('panel-open'); panel.setAttribute('aria-hidden','true');
+  S.selId = null; S.selPart = ''; S.selOff = 0; const panel=$('#panel'); panel.classList.remove('open'); document.body.classList.remove('panel-open'); panel.setAttribute('aria-hidden','true');
   updateSelectionMarker();
 }
-const curP = () => S.projects.get(S.selId);
+const curP = () => partOf(S.projects.get(S.selId), S.selPart) || S.projects.get(S.selId);
+const curOwner = () => S.projects.get(S.selId);
+const uTag = i => floorTag(i + (S.selOff||0));
+const uLong = i => floorLong(i + (S.selOff||0));
+const flyToSel = step => flyToProject(S.selId, step, S.selPart);
 
 function renderPanel(){
   const p = curP(); if(!p) return;
   const T = TYPES[p.type], n = nSteps(p), done=isDone(p), ruin=isRuin(p), upd=inUpdate(p);
   const sel = Math.min(S.selStep, n-1);
   const dl = deadlineInfo(p);
-  let h = '<div class="p-head" style="--tc:'+T.color+'">'
+  const own = curOwner(), sub = p !== own;
+  const hasBranch = !sub && !!p.branch;
+  const verChip = p.version>1?'<span class="chip ver" style="--vc:#'+new THREE.Color(VER_COLS[1+(p.version-2)%(VER_COLS.length-1)]).getHexString()+'">Version '+p.version+'</span>':'';
+  let h;
+  if (sub){
+    h = '<div class="p-head" style="--tc:'+T.color+'">'
+      + '<div class="p-top"><button class="btn small ghost" data-act="tomain">← '+esc(own.name)+'</button><button class="btn small ghost" data-act="close" aria-label="Details schließen">Schließen</button></div>'
+      + '<div class="eyebrow">'+typeIcon(p.type)+(p.kind==='arm' ? 'Zweig ab '+floorTag(own.branch.at)+' · '+esc(own.name) : 'Anbau · Update-Gebäude von '+esc(own.name))+'</div>'
+      + '<h2>'+esc(p.name)+'</h2>'
+      + '<div class="chips">'+statusChip(p, S.selOff)+verChip+'</div>'
+      + (p.desc?'<p class="desc">'+esc(p.desc)+'</p>':'')
+      + '</div>';
+  } else h = '<div class="p-head" style="--tc:'+T.color+'">'
     + '<div class="p-top"><div class="eyebrow">'+typeIcon(p.type)+esc(T.label)+' · '+esc(T.style)+'</div>'
     + '<button class="btn small ghost" data-act="close" aria-label="Details schließen">Schließen</button></div>'
     + '<h2>'+esc(p.name)+'</h2>'
-    + '<div class="chips">'+statusChip(p)+(p.version>1?'<span class="chip ver" style="--vc:#'+new THREE.Color(VER_COLS[1+(p.version-2)%(VER_COLS.length-1)]).getHexString()+'">Version '+p.version+'</span>':'')+'<span class="chip">Priorität: '+PRIO[p.priority]+'</span>'
+    + '<div class="chips">'+statusChip(p)+verChip+'<span class="chip">Priorität: '+PRIO[p.priority]+'</span>'
     + (dl?'<span class="chip'+(dl.late?' late':'')+'">'+esc(dl.txt)+'</span>':'')
     + p.tags.map(t=>'<span class="chip tag">#'+esc(t)+'</span>').join('') + '</div>'
     + (p.desc?'<p class="desc">'+esc(p.desc)+'</p>':'')
@@ -1380,7 +1529,8 @@ function renderPanel(){
   // section drawing
   const shown = ruin ? Math.max(1,p.step) : n;
   h += '<section style="--tc:'+T.color+'"><div class="sec-h"><h3>Bauplan</h3><span>'+(done?n:Math.min(p.step,n))+' / '+n+' Stockwerke</span></div><div class="elev">';
-  if (done) h += '<div class="fl roof"><span class="tagf">Dach</span><span>Fertiggestellt</span><span class="st">'+fmtDate(p.doneAt)+'</span></div>';
+  if (hasBranch) h += '<div class="fl roof"><span class="tagf">⑂</span><span>Verzweigt in „'+esc(p.branch.arms[0].name)+'“ und „'+esc(p.branch.arms[1].name)+'“</span><span class="st">'+fmtDate(p.branch.createdAt)+'</span></div>';
+  else if (done) h += '<div class="fl roof"><span class="tagf">Dach</span><span>Fertiggestellt</span><span class="st">'+fmtDate(p.doneAt)+'</span></div>';
   for (let i=n-1;i>=0;i--){
     let cls, st;
     if (ruin){ if (i>=shown) continue; cls='ruined'; st = p.stepData[i].doneAt ? 'erledigt '+fmtDate(p.stepData[i].doneAt) : 'abgebrochen'; }
@@ -1388,14 +1538,23 @@ function renderPanel(){
     else if (i === p.step){ cls='current'; st= upd || p.stepData[i].history.length ? 'im Umbau' : 'im Bau'; }
     else if (i < p.builtTop){ cls='redo'; st='wird erneuert'; }
     else { cls='planned'; st='geplant'; }
-    h += '<button class="fl '+cls+(i===sel?' sel':'')+'" data-act="step" data-i="'+i+'"><span class="tagf">'+floorTag(i)+'</span><span>'+esc(stepName(p,i))+'</span><span class="st">'+st+'</span></button>';
+    h += '<button class="fl '+cls+(i===sel?' sel':'')+'" data-act="step" data-i="'+i+'"><span class="tagf">'+uTag(i)+'</span><span>'+esc(stepName(p,i))+'</span><span class="st">'+st+'</span></button>';
   }
   h += '<div class="ground"></div></div></section>';
+  if (!sub && (p.branch || p.annexes.length)){
+    const row = (part,u,label) => { const n2=nSteps(u), off=offOf(p,part);
+      const st = isDone(u) ? 'fertig' : floorTag(u.step+off)+' · '+esc(stepName(u,u.step));
+      return '<button class="row" data-act="part" data-part="'+part+'" style="--tc:'+T.color+'">'+typeIcon(p.type)+'<div style="min-width:0"><div class="t">'+label+esc(u.name)+'</div><div class="s">'+st+'</div><div class="bar"><i style="width:'+Math.round(Math.min(u.step,n2)/n2*100)+'%"></i></div></div><div class="r">'+Math.min(u.step,n2)+'/'+n2+'</div></button>'; };
+    h += '<section><div class="sec-h"><h3>Gebäudeteile</h3></div><div class="rows-inline">'
+      + (p.branch ? p.branch.arms.map((a,k)=>row('b'+k,a,'Zweig '+(k?'B':'A')+': ')).join('') : '')
+      + p.annexes.map((a,k)=>row('a'+k,a,'Anbau: ')).join('')
+      + '</div></section>';
+  }
   // selected step
   const sd = p.stepData[sel];
   const stState = ruin ? 'Projekt abgebrochen' : sel < p.step ? 'Abgeschlossen am '+fmtDate(sd.doneAt)+(sd.ver>1?' · Version '+sd.ver:'') : sel===p.step ? (sd.history.length ? 'Im Umbau für Version '+p.version+' – dieses Stockwerk wird gerade erneuert' : 'In Arbeit – dieses Stockwerk ist gerade Baustelle') : sel < p.builtTop ? 'Wird für Version '+p.version+' erneuert, sobald die Stockwerke darunter fertig sind' : 'Geplant – wird gebaut, sobald die Schritte darunter fertig sind';
   const cl = sd.checklist, clDone = cl.filter(c=>c.done).length;
-  h += '<section class="stepcard"><div class="step-h"><span class="ft">'+floorTag(sel)+'</span><h3>'+esc(stepName(p,sel))+'</h3><span class="st">'+floorLong(sel)+' · '+stState+'</span></div>';
+  h += '<section class="stepcard"><div class="step-h"><span class="ft">'+uTag(sel)+'</span><h3>'+esc(stepName(p,sel))+'</h3><span class="st">'+uLong(sel)+' · '+stState+'</span></div>';
   h += '<label class="field"><span>Notizen</span><textarea id="f-notes" data-act="notes" placeholder="Was gehört zu „'+esc(stepName(p,sel))+'“? Gedanken, Entscheidungen, offene Fragen …">'+esc(sd.notes)+'</textarea></label>';
   h += '<div class="blk"><div class="blk-h">Checkliste<small>'+clDone+' / '+cl.length+'</small></div>';
   if (cl.length) h += '<ul class="list">'+cl.map(c=>'<li class="li'+(c.done?' checked':'')+'"><label><input type="checkbox" data-act="ck" data-id="'+c.id+'"'+(c.done?' checked':'')+'><span>'+esc(c.t)+'</span></label><button class="x" data-act="ckdel" data-id="'+c.id+'" aria-label="Punkt löschen">×</button></li>').join('')+'</ul>';
@@ -1423,10 +1582,12 @@ function renderPanel(){
       + '</ul></details>';
   }
   if (!ruin){
-    const canUpdate = sel < p.step;
+    const canUpdate = sel < p.step && !hasBranch;
     const canRemove = !done && sel >= p.step && n > 1 && !(sel < p.builtTop);
-    if (canUpdate || canRemove){
+    const canBranch = !sub && !p.branch && !done && !upd && sel===p.step && p.step>=1;
+    if (canUpdate || canRemove || canBranch){
       h += '<div class="actions">'
+        + (canBranch ? '<button class="btn small" data-act="ask-branch">⑂ Verzweigung ab hier</button>' : '')
         + (canUpdate ? '<button class="btn small" data-act="ask-update">Update ab diesem Stockwerk</button>' : '')
         + (canRemove ? '<button class="btn small ghost danger" data-act="ask-rmstep">Schritt entfernen</button>' : '')
         + '</div><div id="stepConfirm"></div>';
@@ -1434,21 +1595,67 @@ function renderPanel(){
   }
   h += '</section>';
   // project actions
-  h += '<section><div class="sec-h"><h3>Projekt</h3></div><div class="actions" id="projActions">'
+  const canAnnex = !sub && !ruin && projectDone(p) && p.annexes.length < maxAnnexes(p);
+  if (sub) h += '<section><div class="sec-h"><h3>'+(p.kind==='arm'?'Zweig':'Anbau')+'</h3></div><div class="actions" id="projActions">'
+    + '<button class="btn small" data-act="ask-rename">Umbenennen</button>'
+    + (done ? '<button class="btn small primary" data-act="ask-addstep">Wieder eröffnen · Schritt hinzufügen</button>' : '<button class="btn small" data-act="ask-addstep">Schritt hinzufügen</button>')
+    + (p.step>0 ? '<button class="btn small" data-act="back">Einen Schritt zurück</button>' : '')
+    + (p.kind==='annex' ? '<button class="btn small danger" data-act="ask-rmannex">Anbau abreißen</button>' : '<button class="btn small danger" data-act="ask-unbranch">Verzweigung aufheben</button>')
+    + '</div><div id="confirmBox"></div>';
+  else h += '<section><div class="sec-h"><h3>Projekt</h3></div><div class="actions" id="projActions">'
     + '<button class="btn small" data-act="edit">Bearbeiten</button>'
-    + (done ? '<button class="btn small primary" data-act="ask-addstep">Wieder eröffnen · Schritt hinzufügen</button>' : (!ruin ? '<button class="btn small" data-act="ask-addstep">Schritt hinzufügen</button>' : ''))
-    + (!ruin && p.step>0 ? '<button class="btn small" data-act="back">Einen Schritt zurück</button>' : '')
-    + (ruin ? '<button class="btn small" data-act="resume">Wieder aufnehmen</button>' : (!done ? '<button class="btn small danger" data-act="ask-abandon">Projekt abbrechen</button>' : ''))
+    + (canAnnex ? '<button class="btn small primary" data-act="ask-annex">Anbau für Update</button>' : '')
+    + (hasBranch ? '' : done ? '<button class="btn small'+(canAnnex?'':' primary')+'" data-act="ask-addstep">Wieder eröffnen · Schritt hinzufügen</button>' : (!ruin ? '<button class="btn small" data-act="ask-addstep">Schritt hinzufügen</button>' : ''))
+    + (!ruin && !hasBranch && p.step>0 ? '<button class="btn small" data-act="back">Einen Schritt zurück</button>' : '')
+    + (ruin ? '<button class="btn small" data-act="resume">Wieder aufnehmen</button>' : (!projectDone(p) ? '<button class="btn small danger" data-act="ask-abandon">Projekt abbrechen</button>' : ''))
     + '<button class="btn small danger" data-act="ask-delete">Löschen</button></div>'
     + '<div id="confirmBox"></div>'
-    + (p.updates.length ? '<ul class="list vers">'+p.updates.slice().reverse().map(u=>'<li class="li" style="display:block"><b>'+(u.kind==='add'?'Erweiterung':'Version '+u.ver)+'</b> · '+esc(u.name||'')+'<div class="meta">'+(u.kind==='add'?'neues Stockwerk ':'ab ')+esc(u.floor||'')+' · gestartet '+fmtDate(u.at)+(u.doneAt?' · fertig '+fmtDate(u.doneAt):' · läuft')+'</div></li>').join('')+'</ul>' : '')
-    + '<p class="empty-note" style="margin-top:10px">Angelegt am '+fmtDate(p.createdAt)+' · Grundstück '+(p.lot+1)+'</p></section>';
+    + (p.updates.length ? '<ul class="list vers">'+p.updates.slice().reverse().map(u=>{
+        const kl = {add:'Erweiterung', annex:'Anbau', branch:'Verzweigung'}[u.kind] || 'Version '+u.ver;
+        const where = u.kind==='add' ? 'neues Stockwerk '+esc(u.floor||'') : u.kind==='annex' ? 'neues Gebäude daneben' : 'ab '+esc(u.floor||'');
+        return '<li class="li" style="display:block"><b>'+kl+'</b> · '+esc(u.name||'')+'<div class="meta">'+where+' · gestartet '+fmtDate(u.at)+(u.doneAt?' · fertig '+fmtDate(u.doneAt):' · läuft')+'</div></li>'; }).join('')+'</ul>' : '')
+    + (sub ? '' : '<p class="empty-note" style="margin-top:10px">Angelegt am '+fmtDate(p.createdAt)+' · Grundstück '+(p.lot+1)+'</p>') + '</section>';
   $('#panelBody').innerHTML = h;
   $('#panelBody').querySelectorAll('img[data-ref]').forEach(async img=>{
     const ref = findRef(p, img.dataset.ref); if(!ref) return;
     const u = await fileUrl(ref); if (u) img.src = u; else img.alt = 'Bild nur in einem anderen Browser gespeichert';
   });
 }
+/* ---------- branch & annex ---------- */
+function createBranch(p, nameA, nameB){
+  const X = p.step, now = new Date().toISOString();
+  const A = normalizeUnit({kind:'arm', name:nameA, steps:p.steps.slice(X), stepData:p.stepData.slice(X), version:p.version}, p.type);
+  const B = normalizeUnit({kind:'arm', name:nameB, steps:p.steps.slice(X), version:p.version}, p.type);
+  B.steps.forEach((_,i)=>applyTemplateChecks(B,i));
+  p.steps = p.steps.slice(0,X); p.stepData = p.stepData.slice(0,X); p.step = X; p.builtTop = 0;
+  p.branch = {at:X, createdAt:now, arms:[A,B]};
+  p.updates.push({kind:'branch', name:nameA+' / '+nameB, floor:floorTag(X), at:now, doneAt:''});
+  persist(p); syncBuildings(); updateStats();
+  toast('Verzweigt: „'+nameA+'“ und „'+nameB+'“ wachsen ab '+floorTag(X));
+  openProject(p.id, 0, 'b0');
+}
+function removeBranch(p){
+  if (!p || !p.branch) return;
+  const [A,B] = p.branch.arms;
+  B.stepData.forEach(sd=>[...sd.images,...sd.files].forEach(deleteFile));
+  p.step = p.branch.at + A.step;
+  p.steps = p.steps.concat(A.steps); p.stepData = p.stepData.concat(A.stepData);
+  p.builtTop = A.builtTop ? p.branch.at + A.builtTop : 0;
+  p.branch = null; p.doneAt = isDone(p) ? (A.doneAt || new Date().toISOString()) : '';
+  p.updates = p.updates.filter(x=>x.kind!=='branch' || x.doneAt);
+  persist(p); syncBuildings(); updateStats(); openProject(p.id, null, ''); toast('Verzweigung aufgehoben');
+}
+function createAnnex(p, name){
+  const now = new Date().toISOString();
+  const u = normalizeUnit({kind:'annex', name}, p.type);
+  u.steps.forEach((_,i)=>applyTemplateChecks(u,i));
+  p.annexes.push(u);
+  p.updates.push({kind:'annex', uid:u.id, name, floor:'', at:now, doneAt:''});
+  persist(p); syncBuildings(); updateStats();
+  toast('Anbau „'+name+'“ ist jetzt Baustelle');
+  openProject(p.id, 0, 'a'+(p.annexes.length-1));
+}
+
 /* ---------- updates & added steps ---------- */
 function resetFrom(p, from, to){ // floors [from,to) were built and must be done again
   for (let i=from;i<to;i++){
@@ -1466,10 +1673,10 @@ function startUpdate(p, from, name){
   p.version += 1;
   resetFrom(p, from, built);
   p.step = from; p.doneAt = '';
-  p.updates.push({kind:'update', ver:p.version, name:name||'Update', floor:floorTag(from)+' '+stepName(p,from), at:new Date().toISOString(), doneAt:''});
+  p.updates.push({kind:'update', ver:p.version, name:name||'Update', floor:uTag(from)+' '+stepName(p,from), at:new Date().toISOString(), doneAt:''});
   S.selStep = from;
-  persist(p); syncBuildings(); renderPanel(); updateStats(); flyToProject(p.id, from);
-  toast('Update v'+p.version+' gestartet – '+floorTag(from)+' ist jetzt Baustelle');
+  persist(p); syncBuildings(); renderPanel(); updateStats(); flyToSel(from);
+  toast('Update v'+p.version+' gestartet – '+uTag(from)+' ist jetzt Baustelle');
 }
 function insertStep(p, pos, name){
   const n = nSteps(p), done = isDone(p), built = done ? n : p.step;
@@ -1481,16 +1688,16 @@ function insertStep(p, pos, name){
     resetFrom(p, pos+1, built+1);
     p.builtTop = Math.max(p.builtTop, built+1);
     p.step = pos;
-    p.updates.push({kind:'update', ver:p.version, name:'Neuer Schritt: '+name, floor:floorTag(pos)+' '+name, at:new Date().toISOString(), doneAt:''});
+    p.updates.push({kind:'update', ver:p.version, name:'Neuer Schritt: '+name, floor:uTag(pos)+' '+name, at:new Date().toISOString(), doneAt:''});
   } else {
-    if (done) p.updates.push({kind:'add', ver:p.version, name:name, floor:floorTag(pos), at:new Date().toISOString(), doneAt:''});
+    if (done) p.updates.push({kind:'add', ver:p.version, name:name, floor:uTag(pos), at:new Date().toISOString(), doneAt:''});
     if (pos <= p.step) p.step = pos;
   }
   p.stepData[pos].ver = p.version; applyTemplateChecks(p, pos);
   p.doneAt = isDone(p) ? p.doneAt : '';
   S.selStep = pos;
-  persist(p); syncBuildings(); renderPanel(); updateStats(); flyToProject(p.id, pos);
-  toast(done ? 'Wieder eröffnet – '+floorTag(pos)+' „'+name+'“ ist jetzt Baustelle' : '„'+name+'“ eingefügt');
+  persist(p); syncBuildings(); renderPanel(); updateStats(); flyToSel(pos);
+  toast(done ? 'Wieder eröffnet – '+uTag(pos)+' „'+name+'“ ist jetzt Baustelle' : '„'+name+'“ eingefügt');
 }
 function safeUrl(u){ return /^https?:\/\//i.test(u) ? u : 'https://'+u.replace(/^\/+/,''); }
 function findRef(p,id){ if (p.cover && p.cover.id===id) return p.cover; for(const sd of p.stepData){ for(const r of sd.images.concat(sd.files)) if(r.id===id) return r; } return null; }
@@ -1520,6 +1727,9 @@ $('#panelBody').addEventListener('submit', e=>{
   e.preventDefault(); const p=curP(); if(!p) return;
   const sd = p.stepData[Math.min(S.selStep,nSteps(p)-1)];
   if (e.target.dataset.form==='ck'){ const v=$('#f-ck').value.trim(); if(!v) return; sd.checklist.push({id:uid(),t:v,done:false}); persist(p); renderPanel(); $('#f-ck').focus(); }
+  if (e.target.dataset.form==='branch'){ createBranch(curOwner(), $('#f-bra').value.trim()||'Variante A', $('#f-brb').value.trim()||'Variante B'); return; }
+  if (e.target.dataset.form==='annex'){ const nm=$('#f-annex').value.trim(); if(!nm) return; createAnnex(curOwner(), nm); return; }
+  if (e.target.dataset.form==='rename'){ const nm=$('#f-rename').value.trim(); if(!nm) return; p.name = nm; persist(p); renderPanel(); return; }
   if (e.target.dataset.form==='update'){ startUpdate(p, Math.min(S.selStep,nSteps(p)-1), $('#f-upd').value.trim()); return; }
   if (e.target.dataset.form==='addstep'){ const nm=$('#f-newstep').value.trim(); if(!nm) return; insertStep(p, +$('#f-newpos').value, nm); return; }
   if (e.target.dataset.form==='lk'){ const u=$('#f-lk').value.trim(); if(!u) return; sd.links.push({id:uid(),url:u,label:$('#f-lkl').value.trim()}); persist(p); renderPanel(); }
@@ -1530,7 +1740,24 @@ $('#panelBody').addEventListener('click', async e=>{
   const n = nSteps(p), sel = Math.min(S.selStep,n-1), sd = p.stepData[sel], done = isDone(p);
   switch(act){
     case 'close': closePanel(); break;
-    case 'step': S.selStep = +el.dataset.i; renderPanel(); updateSelectionMarker(); if (S.selStep < (buildings.get(p.id)||{info:{n:0}}).info.n) flyToProject(p.id, S.selStep); break;
+    case 'step': { S.selStep = +el.dataset.i; renderPanel(); updateSelectionMarker(); const pt = selPart(buildings.get(S.selId)); if (pt && S.selStep < pt.floors.length) flyToSel(S.selStep); break; }
+    case 'tomain': openProject(S.selId, null, ''); break;
+    case 'part': openProject(S.selId, null, el.dataset.part); break;
+    case 'ask-branch': $('#stepConfirm').innerHTML = '<form class="confirm" data-form="branch" style="margin-top:4px;display:grid;gap:8px;background:var(--accent-soft)">'
+        + '<span><b>Verzweigung ab '+uLong(sel)+'</b>: Das Projekt teilt sich in zwei Zweige. Über dem '+uTag(sel-1)+' entsteht eine breite Plattform auf Stützen, darauf wachsen zwei Türme mit eigenen Schritten. Zweig A übernimmt deinen bisherigen Stand, Zweig B startet frisch.</span>'
+        + '<div class="grid2"><input type="text" id="f-bra" value="Variante A" aria-label="Name von Zweig A"><input type="text" id="f-brb" value="Variante B" aria-label="Name von Zweig B"></div>'
+        + '<div class="actions"><button class="btn small primary">Verzweigen</button><button type="button" class="btn small" data-act="nope">Abbrechen</button></div></form>'; $('#f-bra').focus(); break;
+    case 'ask-annex': $('#confirmBox').innerHTML = '<form class="confirm" data-form="annex" style="margin-top:10px;display:grid;gap:8px;background:var(--accent-soft)">'
+        + '<span>Direkt neben dem Gebäude entsteht ein kleineres <b>Update-Gebäude</b> mit eigenen Schritten: '+ANNEX_STEPS[p.type].join(' → ')+'.</span>'
+        + '<input type="text" id="f-annex" placeholder="Name des Updates, z. B. Version mit Magnethalter" aria-label="Name des Anbaus" required>'
+        + '<div class="actions"><button class="btn small primary">Anbau starten</button><button type="button" class="btn small" data-act="nope">Abbrechen</button></div></form>'; $('#f-annex').focus(); break;
+    case 'ask-rename': $('#confirmBox').innerHTML = '<form class="confirm" data-form="rename" style="margin-top:10px;display:grid;gap:8px;background:var(--surface-2)"><input type="text" id="f-rename" value="'+esc(p.name)+'" aria-label="Neuer Name"><div class="actions"><button class="btn small primary">Speichern</button><button type="button" class="btn small" data-act="nope">Abbrechen</button></div></form>'; $('#f-rename').focus(); break;
+    case 'ask-rmannex': $('#confirmBox').innerHTML = '<div class="confirm" style="margin-top:10px"><span>Anbau „'+esc(p.name)+'“ mit allen Notizen und Dateien abreißen?</span><button class="btn small danger" data-act="rmannex">Abreißen</button><button class="btn small" data-act="nope">Abbrechen</button></div>'; break;
+    case 'rmannex': { const own = curOwner(); const k = own.annexes.indexOf(p); if (k<0) break;
+      p.stepData.forEach(sd=>[...sd.images,...sd.files].forEach(deleteFile)); own.annexes.splice(k,1);
+      own.updates = own.updates.filter(x=>x.uid!==p.id); persist(own); syncBuildings(); updateStats(); openProject(own.id, null, ''); toast('Anbau abgerissen'); break; }
+    case 'ask-unbranch': $('#confirmBox').innerHTML = '<div class="confirm" style="margin-top:10px"><span>Verzweigung aufheben? Zweig A wird wieder Teil des Hauptgebäudes, Zweig B wird mit Notizen und Dateien entfernt.</span><button class="btn small danger" data-act="unbranch">Aufheben</button><button class="btn small" data-act="nope">Abbrechen</button></div>'; break;
+    case 'unbranch': removeBranch(curOwner()); break;
     case 'ckdel': sd.checklist = sd.checklist.filter(c=>c.id!==el.dataset.id); persist(p); renderPanel(); break;
     case 'lkdel': sd.links = sd.links.filter(l=>l.id!==el.dataset.id); persist(p); renderPanel(); break;
     case 'imgdel': { const r=sd.images.find(r=>r.id===el.dataset.id); sd.images=sd.images.filter(r=>r.id!==el.dataset.id); deleteFile(r); persist(p); renderPanel(); break; }
@@ -1543,16 +1770,23 @@ $('#panelBody').addEventListener('click', async e=>{
       p.stepData[p.step].ver = p.version;
       p.step++;
       if (p.step >= n){
-        p.doneAt = new Date().toISOString(); p.builtTop = 0;
-        p.updates.forEach(u=>{ if(!u.doneAt) u.doneAt = p.doneAt; });
-        toast(p.version>1 ? 'Version '+p.version+' fertiggestellt: '+p.name : 'Fertiggestellt: '+p.name);
-      } else toast(floorTag(p.step)+' · '+stepName(p,p.step)+' ist jetzt Baustelle');
+        const own = curOwner(), now = new Date().toISOString();
+        p.doneAt = now; p.builtTop = 0;
+        p.updates.forEach(u=>{ if(!u.doneAt && !u.uid && u.kind!=='branch') u.doneAt = now; });
+        if (own !== p){
+          own.updates.forEach(x=>{ if (x.uid===p.id && !x.doneAt) x.doneAt = now; });
+          if (own.branch && projectDone(own)) own.updates.forEach(x=>{ if (x.kind==='branch' && !x.doneAt) x.doneAt = now; });
+          if (projectDone(own) && !own.doneAt) own.doneAt = now;
+          toast((p.kind==='arm'?'Zweig':'Anbau')+' fertig: '+p.name+(projectDone(own)?' · '+own.name+' ist komplett':''));
+        } else toast(p.version>1 ? 'Version '+p.version+' fertiggestellt: '+p.name : 'Fertiggestellt: '+p.name);
+      } else toast(uTag(p.step)+' · '+stepName(p,p.step)+' ist jetzt Baustelle');
       S.selStep = Math.min(p.step, n-1);
-      persist(p); syncBuildings(); renderPanel(); updateStats(); flyToProject(p.id, S.selStep); break;
+      persist(p); syncBuildings(); renderPanel(); updateStats(); flyToSel(S.selStep); break;
     }
     case 'back': {
       p.step = Math.max(0, p.step-1); p.stepData[p.step].doneAt=''; p.doneAt='';
-      S.selStep = p.step; persist(p); syncBuildings(); renderPanel(); updateStats(); flyToProject(p.id, S.selStep); break;
+      { const own = curOwner(); if (own !== p){ own.doneAt=''; own.updates.forEach(x=>{ if (x.uid===p.id || x.kind==='branch') x.doneAt=''; }); } }
+      S.selStep = p.step; persist(p); syncBuildings(); renderPanel(); updateStats(); flyToSel(S.selStep); break;
     }
     case 'resume': p.state='aktiv'; persist(p); syncBuildings(); renderPanel(); updateStats(); toast('Die Baustelle läuft wieder.'); break;
     case 'ask-abandon': $('#confirmBox').innerHTML = '<div class="confirm" style="margin-top:10px"><span>Projekt abbrechen? Es bleibt als Ruine in der Stadt stehen.</span><button class="btn small danger" data-act="abandon">Ja, abbrechen</button><button class="btn small" data-act="nope">Nein</button></div>'; break;
@@ -1561,7 +1795,7 @@ $('#panelBody').addEventListener('click', async e=>{
     case 'ask-update': {
       const last = done ? n : p.step;
       $('#stepConfirm').innerHTML = '<form class="confirm upd" data-form="update" style="margin-top:4px;display:grid;gap:8px;background:var(--accent-soft)">'
-        + '<span><b>Update v'+(p.version+1)+' ab '+floorLong(sel)+'</b>: Die Stockwerke '+floorTag(sel)+' bis '+floorTag(last-1)+' werden erneut durchlaufen. Checklisten werden zurückgesetzt, Notizen, Bilder und Dateien bleiben. Das Gebäude wird zur Baustelle und bekommt danach einen neuen Look.</span>'
+        + '<span><b>Update v'+(p.version+1)+' ab '+uLong(sel)+'</b>: Die Stockwerke '+uTag(sel)+' bis '+uTag(last-1)+' werden erneut durchlaufen. Checklisten werden zurückgesetzt, Notizen, Bilder und Dateien bleiben. Das Gebäude wird zur Baustelle und bekommt danach einen neuen Look.</span>'
         + '<input type="text" id="f-upd" placeholder="Was ändert sich? z. B. neues Design" aria-label="Name des Updates">'
         + '<div class="actions"><button class="btn small primary">Update starten</button><button type="button" class="btn small" data-act="nope">Abbrechen</button></div></form>';
       $('#f-upd').focus(); break;
@@ -1583,7 +1817,7 @@ $('#panelBody').addEventListener('click', async e=>{
       p.steps.splice(i,1); p.stepData.splice(i,1);
       if (p.step >= nSteps(p)){ p.doneAt = p.doneAt || new Date().toISOString(); p.builtTop = 0; }
       S.selStep = Math.min(i, nSteps(p)-1);
-      persist(p); syncBuildings(); renderPanel(); updateStats(); flyToProject(p.id, S.selStep); toast('Schritt entfernt'); break;
+      persist(p); syncBuildings(); renderPanel(); updateStats(); flyToSel(S.selStep); toast('Schritt entfernt'); break;
     }
     case 'abandon': p.state='abgebrochen'; persist(p); syncBuildings(); renderPanel(); updateStats(); toast('Projekt abgebrochen – die Ruine bleibt stehen.'); break;
     case 'delete': { const name=p.name; closePanel(); await removeProject(p); syncBuildings(); updateStats(); $('#empty').hidden = S.projects.size>0; toast(name+' gelöscht'); break; }
@@ -1694,7 +1928,11 @@ function renderList(){
     .sort((a,b)=> stRank[statusOf(a)]-stRank[statusOf(b)] || prioRank[a.priority]-prioRank[b.priority] || (a.deadline||'9999').localeCompare(b.deadline||'9999') || a.name.localeCompare(b.name,'de'));
   $('#rows').innerHTML = list.length ? list.map(p=>{
     const T=TYPES[p.type], n=nSteps(p), st=statusOf(p), dl=deadlineInfo(p);
-    const sub = st==='ruin' ? 'Ruine · '+stepName(p,Math.min(p.step,n-1)) : st==='done' ? 'Fertig'+(p.version>1?' · v'+p.version:'') : (inUpdate(p)?'Umbau v'+p.version+' · ':'')+floorTag(p.step)+' · '+stepName(p,p.step);
+    const openAnnex = p.annexes.find(a=>!isDone(a));
+    const sub = st==='ruin' ? 'Ruine · '+stepName(p,Math.min(p.step,n-1)) : st==='done' ? 'Fertig'+(p.version>1?' · v'+p.version:'')+(p.branch?' · 2 Zweige':'')+(p.annexes.length?' · '+p.annexes.length+' Anbau':'')
+      : p.branch ? 'Zweige: '+p.branch.arms.map(a=>a.name+' '+(isDone(a)?'fertig':floorTag(a.step+p.branch.at))).join(' · ')
+      : isDone(p) && openAnnex ? 'Anbau „'+openAnnex.name+'“ · '+floorTag(openAnnex.step)+' · '+stepName(openAnnex,openAnnex.step)
+      : (inUpdate(p)?'Umbau v'+p.version+' · ':'')+floorTag(p.step)+' · '+stepName(p,p.step);
     return '<button class="row" data-id="'+p.id+'" style="--tc:'+(st==='ruin'?'#7a726b':T.color)+'">'+typeIcon(p.type)+'<div style="min-width:0"><div class="t">'+esc(p.name)+'</div><div class="s">'+esc(sub)+(dl?' · <span style="color:'+(dl.late?'var(--danger)':'inherit')+'">'+esc(dl.txt)+'</span>':'')+'</div><div class="bar"><i style="width:'+Math.round(Math.min(p.step,n)/n*100)+'%"></i></div></div><div class="r">'+Math.min(p.step,n)+'/'+n+'<br>'+PRIO[p.priority]+'</div></button>';
   }).join('') : '<p class="empty-note">'+(S.projects.size?'Keine Projekte passen zu deiner Suche.':'Noch keine Projekte angelegt.')+'</p>';
 }
