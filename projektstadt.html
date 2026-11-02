@@ -1237,70 +1237,94 @@ function clipboardCanvas(u, i, off){
   const photos = sd.images.slice(0, papers.length ? 3 : 4);
 
   const top = 232, bottom = CH-40;
-  const photoH = photos.length ? (papers.length ? 330 : bottom-top) : 0;
-  const textBottom = bottom - (photoH ? photoH+16 : 0);
+  let photoH = photos.length ? (papers.length ? 330 : bottom-top) : 0;
+  let textBottom = bottom - (photoH ? photoH+16 : 0);
   if (!papers.length && !photos.length){
     c.fillStyle = 'rgba(60,35,10,.7)'; c.font = 'italic 34px Figtree, system-ui, sans-serif'; c.textAlign = 'center';
     c.fillText('Für diese Etage ist noch nichts notiert.', CW/2, CH/2); c.textAlign = 'left';
   }
-  // text papers: one column, or two when there is more than one paper
-  const LH = 36;
-  const cols = papers.length > 1 ? [[],[]] : [papers];
-  if (papers.length > 1) papers.forEach((pp,k)=>cols[k%2].push(pp));
-  const colW = papers.length > 1 ? (CW-80-24)/2 : CW-80;
+  // text papers: notes across the full width, the other papers in two columns below.
+  // The font shrinks until everything fits, so nothing noted gets cut off.
+  const others = papers.filter(pp=>pp.kind!=='notes');
+  const hasNotes = papers.some(pp=>pp.kind==='notes');
+  const fullW = CW-80, halfW = others.length > 1 ? (fullW-24)/2 : fullW;
+  const cols = others.length > 1 ? [[],[]] : [others];
+  if (others.length > 1) others.forEach((pp,k)=>cols[k%2].push(pp));
+  const metrics = f => ({fs:Math.round(27*f), LH:Math.round(36*f), head:Math.round(64*f), pad:Math.round(30*f)});
+  const linesFor = (kind, w, m) => {
+    c.font = '400 '+m.fs+'px Figtree, system-ui, sans-serif';
+    if (kind==='notes') return wrapLines(c, notes, w-58-24, 400).length;
+    return kind==='check' ? sd.checklist.length : kind==='stl' ? sd.files.length : sd.links.length;
+  };
+  const paperH = (kind, w, m, maxLines) => m.head + m.pad + Math.min(linesFor(kind,w,m), maxLines||1e9)*m.LH;
+  const layoutH = m => {
+    const nH = hasNotes ? paperH('notes', fullW, m) + (others.length ? 22 : 0) : 0;
+    const cH = Math.max(0, ...cols.map(col=>col.reduce((a,pp)=>a+paperH(pp.kind, cols.length>1?halfW:fullW, m)+22, -22)));
+    return nH + cH;
+  };
+  let f = 1, m = metrics(f);
+  const availText = () => textBottom - top;
+  // make room: first the photos get smaller, then the writing
+  while (layoutH(m) > availText() && (f > .5 || (photos.length && photoH > 200))){
+    if (photos.length && photoH > 200){ photoH -= 15; textBottom = bottom - photoH - 16; }
+    else { f -= .04; m = metrics(f); }
+  }
+  function drawPaper(kind, x, y, w, maxLines, tilt){
+    const lines = Math.min(linesFor(kind, w, m), maxLines);
+    const h = m.head + m.pad + lines*m.LH;
+    c.save(); c.translate(x+w/2, y+h/2); c.rotate(tilt); c.translate(-w/2, -h/2);
+    c.shadowColor = 'rgba(0,0,0,.25)'; c.shadowBlur = 12; c.shadowOffsetY = 4;
+    c.fillStyle = {notes:'#fdfcf7', check:'#ffe58a', stl:'#dcecfb', links:'#eef8ec'}[kind]; c.fillRect(0,0,w,h); c.shadowColor = 'transparent';
+    if (kind==='notes'){ c.strokeStyle = '#c9daf0'; c.lineWidth = 2; for (let ly=m.head+m.pad/2+8; ly<h-4; ly+=m.LH){ c.beginPath(); c.moveTo(0,ly); c.lineTo(w,ly); c.stroke(); } c.strokeStyle = '#ef9a9a'; c.beginPath(); c.moveTo(46,0); c.lineTo(46,h); c.stroke(); }
+    c.fillStyle = '#26303b'; c.font = '700 '+Math.round(26*Math.max(f,.8))+'px Figtree, system-ui, sans-serif';
+    c.fillText({notes:'Notizen', check:'Checkliste · '+sd.checklist.filter(x=>x.done).length+'/'+sd.checklist.length, stl:'STL-Dateien · '+sd.files.length, links:'Links'}[kind], 58, Math.round(m.head*.68));
+    c.font = '400 '+m.fs+'px Figtree, system-ui, sans-serif';
+    const tx = 58, maxW = w-tx-24; let ty = m.head + m.pad/2 + Math.round(m.LH*.72);
+    const more = n => { if (n>0){ c.fillStyle = '#6b7480'; c.font = 'italic '+m.fs+'px Figtree, system-ui, sans-serif'; c.fillText('+ '+n+' weitere', tx, ty); } };
+    const box = Math.round(22*f);
+    if (kind==='notes'){
+      const all = wrapLines(c, notes, maxW, 400), show = all.slice(0, lines);
+      show.forEach((l,j)=>{ c.fillText(j===show.length-1 && all.length>show.length ? fitText(c,l+' …',maxW) : l, tx, ty); ty += m.LH; });
+    } else if (kind==='check'){
+      const items = sd.checklist, n = items.length > lines ? lines-1 : items.length;
+      items.slice(0,n).forEach(it=>{
+        c.strokeStyle = '#4a4030'; c.lineWidth = 2.5; c.strokeRect(tx, ty-box+1, box, box);
+        if (it.done){ c.strokeStyle = '#2c8452'; c.lineWidth = 4; c.beginPath(); c.moveTo(tx+box*.18,ty-box*.45); c.lineTo(tx+box*.45,ty-box*.1); c.lineTo(tx+box,ty-box*1.05); c.stroke(); }
+        c.fillStyle = it.done ? '#6f6750' : '#26303b';
+        const t = fitText(c, it.t, maxW-box-12); c.fillText(t, tx+box+12, ty);
+        if (it.done){ const tw = c.measureText(t).width; c.strokeStyle = '#6f6750'; c.lineWidth = 2; c.beginPath(); c.moveTo(tx+box+12, ty-m.fs*.33); c.lineTo(tx+box+12+tw, ty-m.fs*.33); c.stroke(); }
+        ty += m.LH; });
+      more(items.length-n);
+    } else if (kind==='stl'){
+      const items = sd.files, n = items.length > lines ? lines-1 : items.length;
+      items.slice(0,n).forEach(r=>{
+        c.fillStyle = '#e36b16'; c.beginPath(); c.moveTo(tx+box/2,ty-box); c.lineTo(tx+box,ty); c.lineTo(tx,ty); c.closePath(); c.fill();
+        c.fillStyle = '#26303b'; const sz = fmtSize(r.size||0); c.font = '500 '+Math.round(22*f)+'px JetBrains Mono, monospace'; const sw = c.measureText(sz).width;
+        c.fillText(sz, tx+maxW-sw, ty); c.font = '400 '+m.fs+'px Figtree, system-ui, sans-serif';
+        c.fillText(fitText(c, r.name, maxW-sw-box-24), tx+box+12, ty); ty += m.LH; });
+      more(items.length-n);
+    } else {
+      const items = sd.links, n = items.length > lines ? lines-1 : items.length;
+      items.slice(0,n).forEach(l=>{ c.fillStyle = '#2a63b8'; c.fillText(fitText(c, '↗ '+(l.label||l.url.replace(/^https?:\/\//,'')), maxW), tx, ty); ty += m.LH; });
+      more(items.length-n);
+    }
+    c.restore();
+    return h;
+  }
+  // if it still does not fit at the smallest size, notes keep what fits and end with "…"
+  let y = top;
+  if (hasNotes){
+    const colsMax = Math.max(0, ...cols.map(col=>col.reduce((a,pp)=>a+paperH(pp.kind, cols.length>1?halfW:fullW, m)+22, -22)));
+    const room = availText() - colsMax - (others.length ? 22 : 0);
+    const maxLines = Math.max(2, Math.floor((room - m.head - m.pad)/m.LH + .001));
+    y += drawPaper('notes', 40, y, fullW, maxLines, -.004) + 22;
+  }
   cols.forEach((col, ci)=>{
-    if (!col.length) return;
-    const x = 40 + ci*(colW+24);
-    const avail = textBottom - top - (col.length-1)*22;
-    // lines each paper wants
-    c.font = '400 27px Figtree, system-ui, sans-serif';
-    const want = col.map(pp=> pp.kind==='notes' ? wrapLines(c, notes, colW-70, 40).length : pp.kind==='check' ? sd.checklist.length : pp.kind==='stl' ? sd.files.length : sd.links.length);
-    const head = 64, pad = 30;
-    let total = want.reduce((a,n)=>a+head+pad+n*LH,0);
-    let y = top;
+    let cy = y; const w = cols.length>1 ? halfW : fullW, x = 40 + ci*(halfW+24);
     col.forEach((pp,k)=>{
-      let lines = want[k];
-      if (total > avail){ const share = Math.max(head+pad+LH, Math.floor(avail*(head+pad+want[k]*LH)/total)); lines = Math.max(1, Math.floor((share-head-pad)/LH)); }
-      const h = head + pad + lines*LH;
-      c.save(); c.translate(x+colW/2, y+h/2); c.rotate(((ci*3+k*5)%7-3)*.006); c.translate(-colW/2, -h/2);
-      c.shadowColor = 'rgba(0,0,0,.25)'; c.shadowBlur = 12; c.shadowOffsetY = 4;
-      const bg = {notes:'#fdfcf7', check:'#ffe58a', stl:'#dcecfb', links:'#eef8ec'}[pp.kind];
-      c.fillStyle = bg; c.fillRect(0,0,colW,h); c.shadowColor = 'transparent';
-      if (pp.kind==='notes'){ c.strokeStyle = '#c9daf0'; c.lineWidth = 2; for (let ly=head+LH-8; ly<h-6; ly+=LH){ c.beginPath(); c.moveTo(0,ly+pad/2); c.lineTo(colW,ly+pad/2); c.stroke(); } c.strokeStyle = '#ef9a9a'; c.beginPath(); c.moveTo(46,0); c.lineTo(46,h); c.stroke(); }
-      c.fillStyle = '#26303b'; c.font = '700 26px Figtree, system-ui, sans-serif';
-      const title = {notes:'Notizen', check:'Checkliste · '+sd.checklist.filter(x=>x.done).length+'/'+sd.checklist.length, stl:'STL-Dateien · '+sd.files.length, links:'Links'}[pp.kind];
-      c.fillText(title, 58, 44);
-      c.font = '400 27px Figtree, system-ui, sans-serif';
-      const tx = 58, maxW = colW-tx-20; let ty = head + pad/2 + 26;
-      const more = n => { if (n>0){ c.fillStyle = '#6b7480'; c.font = 'italic 24px Figtree, system-ui, sans-serif'; c.fillText('+ '+n+' weitere', tx, ty); } };
-      if (pp.kind==='notes'){
-        const all = wrapLines(c, notes, maxW, 40); const show = all.slice(0, lines);
-        show.forEach((l,j)=>{ c.fillText(j===show.length-1 && all.length>show.length ? fitText(c,l+' …',maxW) : l, tx, ty); ty += LH; });
-      } else if (pp.kind==='check'){
-        const items = sd.checklist, n = items.length > lines ? lines-1 : items.length;
-        items.slice(0,n).forEach(it=>{
-          c.strokeStyle = '#4a4030'; c.lineWidth = 2.5; c.strokeRect(tx, ty-21, 22, 22);
-          if (it.done){ c.strokeStyle = '#2c8452'; c.lineWidth = 4; c.beginPath(); c.moveTo(tx+4,ty-10); c.lineTo(tx+10,ty-3); c.lineTo(tx+22,ty-24); c.stroke(); }
-          c.fillStyle = it.done ? '#6f6750' : '#26303b';
-          const t = fitText(c, it.t, maxW-36); c.fillText(t, tx+34, ty);
-          if (it.done){ const w = c.measureText(t).width; c.strokeStyle = '#6f6750'; c.lineWidth = 2; c.beginPath(); c.moveTo(tx+34, ty-9); c.lineTo(tx+34+w, ty-9); c.stroke(); }
-          ty += LH; });
-        more(items.length-n);
-      } else if (pp.kind==='stl'){
-        const items = sd.files, n = items.length > lines ? lines-1 : items.length;
-        items.slice(0,n).forEach(r=>{
-          c.fillStyle = '#e36b16'; c.beginPath(); c.moveTo(tx+11,ty-22); c.lineTo(tx+22,ty); c.lineTo(tx,ty); c.closePath(); c.fill();
-          c.fillStyle = '#26303b'; const sz = fmtSize(r.size||0); c.font = '500 22px JetBrains Mono, monospace'; const sw = c.measureText(sz).width;
-          c.fillText(sz, tx+maxW-sw, ty); c.font = '400 27px Figtree, system-ui, sans-serif';
-          c.fillText(fitText(c, r.name, maxW-sw-50), tx+34, ty); ty += LH; });
-        more(items.length-n);
-      } else {
-        const items = sd.links, n = items.length > lines ? lines-1 : items.length;
-        items.slice(0,n).forEach(l=>{ c.fillStyle = '#2a63b8'; c.fillText(fitText(c, '↗ '+(l.label||l.url.replace(/^https?:\/\//,'')), maxW), tx, ty); ty += LH; });
-        more(items.length-n);
-      }
-      c.restore();
-      y += h + 22;
+      const left = textBottom - cy;
+      const maxLines = Math.max(1, Math.floor((left - m.head - m.pad)/m.LH));
+      cy += drawPaper(pp.kind, x, cy, w, maxLines, ((ci*3+k*5)%7-3)*.006) + 22;
     });
   });
   // photo slots (polaroids), drawn when the images arrive
@@ -1341,6 +1365,9 @@ function makeClipboard(u, i, off){
   const back = new THREE.Mesh(new THREE.BoxGeometry(W*.985,H*.985,.08), new THREE.MeshLambertMaterial({color:0x9a6d3c})); g.add(back);
   const clip = new THREE.Mesh(new THREE.BoxGeometry(W*.34,.32,.22), new THREE.MeshLambertMaterial({color:0x9aa3ad})); clip.position.set(0,H/2-.12,.1); g.add(clip);
   g.userData.tex = tex;
+  // always in front: nothing in the city (e.g. the crane) may cut through the clipboard
+  g.renderOrder = 999;
+  g.traverse(o=>{ if (o.material){ o.material.depthTest = false; o.material.depthWrite = false; o.renderOrder = 999 + (o===face ? 2 : o===clip ? 3 : 1); } });
   // photos load in after the board appears
   const token = {};
   g.userData.token = token;
