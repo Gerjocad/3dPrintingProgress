@@ -124,6 +124,9 @@ button,input,textarea,select{font:inherit;color:inherit}
 .vers{margin-top:12px}
 .vers .meta{white-space:normal}
 .rows-inline{display:grid;gap:6px}
+.stepcard.enter{animation:stepIn .45s ease both}
+@keyframes stepIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.fl{transition:background-color .3s ease, outline-color .3s ease}
 kbd{font:600 11px var(--f-mono);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 4px;background:var(--surface)}
 .fl.ruined{background:color-mix(in srgb,#6b6560 22%,var(--surface))}
 .fl.roof{cursor:default;background:transparent;border:0;border-bottom:3px solid var(--tc);border-radius:0;font-weight:700}
@@ -1142,14 +1145,45 @@ function updateSelectionMarker(){
 }
 
 /* ---------- cutaway: lift the floors above the selected one and open it up ---------- */
-const cut = {pid:null, interior:null, clip:null};
+const cut = {pid:null, interior:null, clip:null, dying:[], lastKey:null};
 const LIFT_F = 1.8;
 const floorMat = new THREE.MeshLambertMaterial({color:0xd9c39e});
+/* ---------- soft fades for walls, interiors and the clipboard ---------- */
+const fades = new Map();   // mesh -> running fade
+function fadeMesh(m, to, dur, delay){
+  if (!m.material || Array.isArray(m.material)) { m.visible = to > 0; return; }
+  let f = fades.get(m);
+  const cur = f ? f.cur : (m.visible ? 1 : 0);
+  if (!f){ f = {orig:m.material, mat:m.material.clone()}; f.mat.transparent = true; f.base = f.orig.opacity==null ? 1 : f.orig.opacity; m.material = f.mat; fades.set(m, f); }
+  Object.assign(f, {from:cur, to, cur, t0:performance.now()+(delay||0), dur});
+  f.mat.opacity = f.base*cur; m.visible = true;
+}
+function setVisibleNow(m, v){ const f = fades.get(m); if (f){ m.material = f.orig; f.mat.dispose(); fades.delete(m); } m.visible = v; }
+function updateFades(now){
+  for (const [m,f] of fades){
+    const k = Math.min(1, Math.max(0, (now-f.t0)/f.dur)), e = k*k*(3-2*k);
+    f.cur = f.from + (f.to-f.from)*e;
+    f.mat.opacity = f.base*f.cur; f.mat.depthWrite = f.cur > .97 && f.orig.depthWrite;
+    if (k >= 1){ m.material = f.orig; m.visible = f.to > 0; f.mat.dispose(); fades.delete(m); }
+  }
+}
 function applyCutaway(){
-  if (cut.interior){ cut.interior.parent && cut.interior.parent.remove(cut.interior); disposeGroup(cut.interior); cut.interior=null; }
-  const prevKey = cut.clip ? cut.clip.key : null, prevT0 = cut.clip ? cut.clip.t0 : 0;
-  removeClipboard();
   const p = S.selId && S.projects.get(S.selId);
+  const selB = p && buildings.get(p.id);
+  const selPt = selB && (selB.parts[S.selPart] ? S.selPart : '');
+  const newKey = selB && S.selStep < (selB.parts[selPt]||{floors:[]}).floors.length ? p.id+'|'+selPt+'|'+S.selStep : null;
+  const prevKey = cut.clip ? cut.clip.key : (cut.lastKey || null), prevT0 = cut.clip ? cut.clip.t0 : 0;
+  const animate = !reduceMotion && newKey !== prevKey;
+  cut.lastKey = newKey;
+  if (cut.interior){
+    const old = cut.interior; cut.interior = null;
+    if (animate){ old.traverse(o=>{ if (o.isMesh) fadeMesh(o, 0, 380); }); setTimeout(()=>{ old.parent && old.parent.remove(old); disposeGroup(old); }, 420); }
+    else { old.traverse(o=>{ if (o.isMesh) setVisibleNow(o, false); }); old.parent && old.parent.remove(old); disposeGroup(old); }
+  }
+  if (cut.clip){
+    if (animate){ const g = cut.clip.g; g.traverse(o=>{ if (o.material) o.material.transparent = true; }); cut.dying.push({g, t0:performance.now(), pos:g.position.clone(), sc:g.scale.x}); cut.clip = null; }
+    else removeClipboard();
+  }
   for (const [id,b] of buildings){
     for (const [part, pt] of Object.entries(b.parts)){
       const active = p && id===p.id && part===(b.parts[S.selPart] ? S.selPart : '') && S.selStep < pt.floors.length;
@@ -1157,7 +1191,11 @@ function applyCutaway(){
       pt.floors.forEach((fg,i)=>{
         fg.userData.liftT = active && i>S.selStep ? lift : 0;
         const open = active && i===S.selStep;
-        (fg.userData.solid||[]).forEach(m=>{ m.visible = !open; });
+        (fg.userData.solid||[]).forEach(m=>{
+          const want = !open, now = fades.has(m) ? fades.get(m).to > 0 : m.visible;
+          if (now === want) return;
+          if (animate) fadeMesh(m, want ? 1 : 0, want ? 520 : 460, want ? 120 : 0); else setVisibleNow(m, want);
+        });
       });
       if (pt.roof) pt.roof.userData.liftT = active ? lift : 0;
       pt.extra.forEach(o=>{ o.userData.liftT = active ? lift : 0; });
@@ -1166,6 +1204,7 @@ function applyCutaway(){
         const fg = pt.floors[S.selStep];
         const inter = makeInterior(u, S.selStep, fg, pt.dims, offOf(p,part), part, p.id);
         fg.add(inter); cut.interior = inter; cut.pid = id; cut.root = b.group;
+        if (animate) inter.traverse(o=>{ if (o.isMesh){ o.visible = false; fadeMesh(o, 1, 650, 220); } });
         // the clipboard: re-created on edits without flying in again
         const key = id+'|'+part+'|'+S.selStep;
         const g = makeClipboard(u, S.selStep, offOf(p,part)); scene.add(g);
@@ -1389,6 +1428,13 @@ function removeClipboard(){
 }
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 function updateClipboard(now){
+  cut.dying = cut.dying.filter(d=>{
+    const k = Math.min(1, (now-d.t0)/380);
+    d.g.traverse(o=>{ if (o.material) o.material.opacity = 1-k; });
+    d.g.position.copy(d.pos).y -= k*.8; d.g.scale.setScalar(d.sc*(1-.15*k));
+    if (k >= 1){ scene.remove(d.g); d.g.userData.token = null; d.g.traverse(o=>{ if (o.geometry) o.geometry.dispose(); if (o.material){ if (o.material.map) o.material.map.dispose(); o.material.dispose(); } }); return false; }
+    return true;
+  });
   const cl = cut.clip; if (!cl) return;
   const fg = cl.fg; if (!fg.parent){ removeClipboard(); return; }
   const s = cl.scale;
@@ -1413,7 +1459,9 @@ function updateClipboard(now){
   cl.g.position.lerpVectors(anchor, target, e);
   cl.g.quaternion.copy(camera.quaternion);
   cl.g.rotateZ((1-e)*.5 - .025); cl.g.rotateX(-(1-e)*.6);
-  cl.g.scale.setScalar(size*(.15 + .85*e));
+  cl.g.scale.setScalar(size*(.3 + .7*e));
+  const op = reduceMotion ? 1 : Math.min(1, (now - cl.t0)/550);
+  cl.g.traverse(o=>{ if (o.material){ o.material.transparent = true; o.material.opacity = op; } });
 }
 function makeInterior(p, i, fg, dims, off, part, pid){
   const {w,d,h} = dims;
@@ -1579,7 +1627,7 @@ function frame(now){
   requestAnimationFrame(frame);
   const dt = Math.min(.05,(now-last)/1000); last = now;
   if (document.hidden) return;
-  updateFly(now); controls.update(); updateAnims(now); updateLifts(); updateClipboard(now); updateCars(dt); updateConfetti(dt); updateViewOffset();
+  updateFly(now); controls.update(); updateAnims(now); updateLifts(); updateFades(now); updateClipboard(now); updateCars(dt); updateConfetti(dt); updateViewOffset();
   for (const b of buildings.values()){ const c=b.group.userData.crane; if(c) c.userData.jib.rotation.y = c.userData.phase + Math.sin(now/1000*.18 + c.userData.phase)*1.3; }
   if (selRing.visible){ selRing.material.opacity = .55 + .3*Math.sin(now/300); }
   if (now - lastDN > 30000){ lastDN = now; applyDayNight(); }
@@ -1729,7 +1777,7 @@ function renderPanel(){
   const sd = p.stepData[sel];
   const stState = ruin ? 'Projekt abgebrochen' : sel < p.step ? 'Abgeschlossen am '+fmtDate(sd.doneAt)+(sd.ver>1?' · Version '+sd.ver:'') : sel===p.step ? (sd.history.length ? 'Im Umbau für Version '+p.version+' – dieses Stockwerk wird gerade erneuert' : 'In Arbeit – dieses Stockwerk ist gerade Baustelle') : sel < p.builtTop ? 'Wird für Version '+p.version+' erneuert, sobald die Stockwerke darunter fertig sind' : 'Geplant – wird gebaut, sobald die Schritte darunter fertig sind';
   const cl = sd.checklist, clDone = cl.filter(c=>c.done).length;
-  h += '<section class="stepcard"><div class="step-h"><span class="ft">'+uTag(sel)+'</span><h3>'+esc(stepName(p,sel))+'</h3><span class="st">'+uLong(sel)+' · '+stState+'</span></div>';
+  h += '<section class="stepcard'+(S.stepAnim?' enter':'')+'"><div class="step-h"><span class="ft">'+uTag(sel)+'</span><h3>'+esc(stepName(p,sel))+'</h3><span class="st">'+uLong(sel)+' · '+stState+'</span></div>';
   h += '<label class="field"><span>Notizen</span><textarea id="f-notes" data-act="notes" placeholder="Was gehört zu „'+esc(stepName(p,sel))+'“? Gedanken, Entscheidungen, offene Fragen …">'+esc(sd.notes)+'</textarea></label>';
   h += '<div class="blk"><div class="blk-h">Checkliste<small>'+clDone+' / '+cl.length+'</small></div>';
   if (cl.length) h += '<ul class="list">'+cl.map(c=>'<li class="li'+(c.done?' checked':'')+'"><label><input type="checkbox" data-act="ck" data-id="'+c.id+'"'+(c.done?' checked':'')+'><span>'+esc(c.t)+'</span></label><button class="x" data-act="ckdel" data-id="'+c.id+'" aria-label="Punkt löschen">×</button></li>').join('')+'</ul>';
@@ -1793,6 +1841,7 @@ function renderPanel(){
         const where = u.kind==='add' ? 'neues Stockwerk '+esc(u.floor||'') : u.kind==='annex' ? 'neues Gebäude daneben' : 'ab '+esc(u.floor||'');
         return '<li class="li" style="display:block"><b>'+kl+'</b> · '+esc(u.name||'')+'<div class="meta">'+where+' · gestartet '+fmtDate(u.at)+(u.doneAt?' · fertig '+fmtDate(u.doneAt):' · läuft')+'</div></li>'; }).join('')+'</ul>' : '')
     + (sub ? '' : '<p class="empty-note" style="margin-top:10px">Angelegt am '+fmtDate(p.createdAt)+' · Grundstück '+(p.lot+1)+'</p>') + '</section>';
+  S.stepAnim = false;
   $('#panelBody').innerHTML = h;
   $('#panelBody').querySelectorAll('img[data-ref]').forEach(async img=>{
     const ref = findRef(p, img.dataset.ref); if(!ref) return;
@@ -2013,7 +2062,7 @@ $('#panelBody').addEventListener('click', async e=>{
   const n = nSteps(p), sel = Math.min(S.selStep,n-1), sd = p.stepData[sel], done = isDone(p);
   switch(act){
     case 'close': closePanel(); break;
-    case 'step': { S.selStep = +el.dataset.i; renderPanel(); updateSelectionMarker(); const pt = selPart(buildings.get(S.selId)); if (pt && S.selStep < pt.floors.length) flyToSel(S.selStep); break; }
+    case 'step': { S.selStep = +el.dataset.i; S.stepAnim = true; renderPanel(); updateSelectionMarker(); const pt = selPart(buildings.get(S.selId)); if (pt && S.selStep < pt.floors.length) flyToSel(S.selStep); break; }
     case 'tomain': openProject(S.selId, null, ''); break;
     case 'part': openProject(S.selId, null, el.dataset.part); break;
     case 'ask-branch': $('#stepConfirm').innerHTML = '<form class="confirm" data-form="branch" style="margin-top:4px;display:grid;gap:8px;background:var(--accent-soft)">'
