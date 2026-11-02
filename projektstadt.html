@@ -1268,6 +1268,8 @@ $('#panel').addEventListener('focusout', ()=>{ setTimeout(()=>{ if(panelDirty &&
 /* ---------- panel ---------- */
 function openProject(id, step, fromScene){
   const p = S.projects.get(id); if(!p) return;
+  // remember where the camera was before going into a building, to return there on close
+  if (!S.selId){ const v = fly ? {pos:fly.tp.clone(), tgt:fly.tt.clone()} : {pos:camera.position.clone(), tgt:controls.target.clone()}; S.returnView = v.pos.distanceTo(v.tgt) > 45 ? v : null; }
   S.selId = id; S.selStep = step==null ? Math.min(p.step, nSteps(p)-1) : step;
   const panel = $('#panel'); panel.classList.add('open'); document.body.classList.add('panel-open'); panel.setAttribute('aria-hidden','false');
   renderPanel(); updateSelectionMarker(); flyToProject(id, S.selStep);
@@ -1276,6 +1278,19 @@ function openProject(id, step, fromScene){
   $('#panelBody').scrollTop = 0;
 }
 function closePanel(){
+  const wasId = S.selId;
+  if (wasId){
+    // zoom back out of the building while the floors settle and the roof comes back on
+    const b = buildings.get(wasId);
+    if (S.returnView) flyTo(S.returnView.tgt.clone(), S.returnView.pos.clone(), 1200);
+    else if (b){
+      const tgt = new THREE.Vector3(b.info.x, b.info.top*.45, b.info.z);
+      let dir = camera.position.clone().sub(controls.target); dir.y = 0; if (dir.lengthSq()<1) dir.set(1,0,1); dir.normalize();
+      const dist = 55 + b.info.top*1.2, el = .55;
+      flyTo(tgt, tgt.clone().add(new THREE.Vector3(dir.x*Math.cos(el)*dist, Math.sin(el)*dist, dir.z*Math.cos(el)*dist)), 1200);
+    }
+    S.returnView = null;
+  }
   S.selId = null; const panel=$('#panel'); panel.classList.remove('open'); document.body.classList.remove('panel-open'); panel.setAttribute('aria-hidden','true');
   updateSelectionMarker();
 }
