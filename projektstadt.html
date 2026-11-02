@@ -287,7 +287,9 @@ pre.json{max-height:40vh;overflow:auto;background:var(--surface-2);border-radius
    ===================================================================== */
 const TYPES = {
   druck:{label:'3D-Druck', style:'Werkstatt', color:'#E07A3F',
-    steps:['Idee','Konzept & Skizze','CAD-Modell','Slicing','Testdruck','Nachbearbeitung','Fertig'],
+    steps:['Idee','Konzept & Skizze','CAD-Modell','Slicing','Testdruck','Nachbearbeitung','MakerWorld-Upload','Fertig'],
+    checks:{'MakerWorld-Upload':['Fotos machen','Texte fertig machen','Upload']},
+    legacy:['Idee','Konzept & Skizze','CAD-Modell','Slicing','Testdruck','Nachbearbeitung','Fertig'],
     icon:'<path d="M2 22V11l5 3v-3l5 3v-3l5 3V5h3v17z"/>'},
   app:{label:'App', style:'Glasturm', color:'#3D8BDB',
     steps:['Idee','Konzept & Anforderungen','Design & Mockups','Prototyp','Entwicklung','Testing','Release'],
@@ -318,7 +320,7 @@ const lsSet = (k,v) => { try { localStorage.setItem(k,v); } catch(e){} };
 function normalize(p, id){
   p = p || {};
   const t = TYPES[p.type] ? p.type : 'allg';
-  const steps = Array.isArray(p.steps) && p.steps.length ? p.steps.map(x=>String(x||'Schritt')) : TYPES[t].steps.slice();
+  const steps = Array.isArray(p.steps) && p.steps.length ? p.steps.map(x=>String(x||'Schritt')) : (TYPES[t].legacy && !(p.mig && p.mig.mw) ? TYPES[t].legacy : TYPES[t].steps).slice();
   const n = steps.length;
   const sd = Array.isArray(p.stepData) ? p.stepData : [];
   const stepData = [];
@@ -346,11 +348,35 @@ function normalize(p, id){
     steps, stepData,
     version: Math.max(1, Number(p.version)|0),
     builtTop: Math.max(0, Math.min(n, Number(p.builtTop)|0)),
-    updates: Array.isArray(p.updates) ? p.updates.filter(Boolean) : []
+    updates: Array.isArray(p.updates) ? p.updates.filter(Boolean) : [],
+    mig: p.mig && typeof p.mig==='object' ? p.mig : {}
   };
 }
 const nSteps = p => p.steps.length;
 const stepName = (p,i) => p.steps[i] || '';
+// default checklist items a type brings for certain steps (e.g. the MakerWorld upload)
+function applyTemplateChecks(p, i){
+  const items = (TYPES[p.type].checks||{})[p.steps[i]];
+  if (!items) return;
+  const sd = p.stepData[i];
+  for (const t of items) if (!sd.checklist.some(c=>c.t===t)) sd.checklist.push({id:uid(), t, done:false});
+}
+function migrate(){
+  for (const p of S.projects.values()){
+    if (p.type!=='druck' || p.mig.mw) continue;
+    p.mig.mw = 1;
+    const nb = p.steps.indexOf('Nachbearbeitung');
+    if (!isDone(p) && !isRuin(p) && nb>=0 && !p.steps.includes('MakerWorld-Upload') && p.step <= nb+1){
+      const pos = nb+1;
+      p.steps.splice(pos,0,'MakerWorld-Upload'); p.stepData.splice(pos,0,emptyStep());
+      p.stepData[pos].ver = p.version;
+      if (p.builtTop > pos) p.builtTop += 1;
+      if (pos <= p.step) p.step = pos;
+      applyTemplateChecks(p, pos);
+    }
+    persist(p);
+  }
+}
 const emptyStep = () => ({notes:'', checklist:[], links:[], images:[], files:[], doneAt:'', ver:1, history:[]});
 const inUpdate = p => !isDone(p) && !isRuin(p) && p.builtTop > p.step+1;
 const isDone = p => p.step >= nSteps(p);
@@ -1292,7 +1318,7 @@ function updateStats(){
 
 let panelDirty = false;
 function dataChanged(){
-  if (!S.loaded){ S.loaded = true; $('#loading').hidden = true; fixLots(); syncBuildings(); flyHome(); }
+  if (!S.loaded){ S.loaded = true; $('#loading').hidden = true; fixLots(); migrate(); syncBuildings(); flyHome(); }
   else syncBuildings();
   $('#empty').hidden = S.projects.size > 0;
   updateStats();
@@ -1460,7 +1486,7 @@ function insertStep(p, pos, name){
     if (done) p.updates.push({kind:'add', ver:p.version, name:name, floor:floorTag(pos), at:new Date().toISOString(), doneAt:''});
     if (pos <= p.step) p.step = pos;
   }
-  p.stepData[pos].ver = p.version;
+  p.stepData[pos].ver = p.version; applyTemplateChecks(p, pos);
   p.doneAt = isDone(p) ? p.doneAt : '';
   S.selStep = pos;
   persist(p); syncBuildings(); renderPanel(); updateStats(); flyToProject(p.id, pos);
@@ -1595,7 +1621,7 @@ function openForm(p){
     $('#pf-save').disabled = true;
     const tags = $('#pf-tags').value.split(',').map(s=>s.trim().replace(/^#/,'')).filter(Boolean);
     let target = p;
-    if (isNew){ target = normalize({id:uid(), name, type:(document.querySelector('[name=pf-type]:checked')||{}).value||'allg', createdAt:Date.now()}); target.lot = freeLot(); }
+    if (isNew){ target = normalize({id:uid(), name, type:(document.querySelector('[name=pf-type]:checked')||{}).value||'allg', createdAt:Date.now(), mig:{mw:1}}); target.lot = freeLot(); target.steps.forEach((_,i)=>applyTemplateChecks(target,i)); }
     target.name = name; target.desc = $('#pf-desc').value.trim(); target.priority = $('#pf-prio').value; target.deadline = $('#pf-dl').value; target.tags = tags;
     const cf = $('#pf-cover').files[0];
     if ((cf || removeCover) && target.cover){ deleteFile(target.cover); target.cover = null; }
