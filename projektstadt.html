@@ -68,6 +68,7 @@ button,input,textarea,select{font:inherit;color:inherit}
 .lg i{width:14px;height:14px;border-radius:3px;flex:none}
 .lg .g-build{background:repeating-linear-gradient(135deg,var(--accent) 0 3px,transparent 3px 6px);border:1px solid var(--accent)}
 .lg .g-done{background:#6F9FD0}
+.lg .g-redo{background:repeating-linear-gradient(90deg,#3f9a5c 0 3px,transparent 3px 5px);border:1px solid #3f9a5c}
 .lg .g-ruin{background:linear-gradient(135deg,#6b6560 50%,transparent 50%);border:1px solid #6b6560}
 .lg span:last-child{margin-left:auto;font:600 12px var(--f-mono)}
 .hint{color:var(--muted);font-size:11.5px}
@@ -115,6 +116,13 @@ button,input,textarea,select{font:inherit;color:inherit}
 .fl.current{background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--accent) 20%,var(--surface)) 0 7px,var(--surface) 7px 14px);border-color:color-mix(in srgb,var(--accent) 55%,transparent)}
 .fl.current .st{color:var(--accent);font-weight:700}
 .fl.planned{border:1px dashed var(--line);color:var(--muted)}
+.fl.redo{background:repeating-linear-gradient(90deg,color-mix(in srgb,#3f9a5c 16%,var(--surface)) 0 10px,var(--surface) 10px 12px);border:1px solid color-mix(in srgb,#3f9a5c 45%,transparent)}
+.fl.redo .st{color:#3f9a5c;font-weight:700}
+.chip.ver{background:color-mix(in srgb,var(--vc) 18%,var(--surface));border-color:transparent;color:var(--fg)}
+.hist summary{cursor:pointer;font-weight:700;font-size:12.5px;color:var(--muted)}
+.hist .list{margin-top:6px}
+.vers{margin-top:12px}
+.vers .meta{white-space:normal}
 .fl.ruined{background:color-mix(in srgb,#6b6560 22%,var(--surface))}
 .fl.roof{cursor:default;background:transparent;border:0;border-bottom:3px solid var(--tc);border-radius:0;font-weight:700}
 .fl.sel{outline:2px solid var(--fg);outline-offset:-2px}
@@ -236,6 +244,7 @@ pre.json{max-height:40vh;overflow:auto;background:var(--surface-2);border-radius
   <h2>Legende</h2>
   <div class="lg"><i class="g-build"></i><span>Baustelle · in Arbeit</span><span id="cBuild">0</span></div>
   <div class="lg"><i class="g-done"></i><span>Gebäude · fertig</span><span id="cDone">0</span></div>
+  <div class="lg"><i class="g-redo"></i><span>Grüne Plane · wird erneuert</span><span></span></div>
   <div class="lg"><i class="g-ruin"></i><span>Ruine · abgebrochen</span><span id="cRuin">0</span></div>
   <div class="hint">Jedes Stockwerk ist ein Projektschritt. Tippe auf ein Stockwerk, um ihn zu öffnen.</div>
 </aside>
@@ -309,7 +318,8 @@ const lsSet = (k,v) => { try { localStorage.setItem(k,v); } catch(e){} };
 function normalize(p, id){
   p = p || {};
   const t = TYPES[p.type] ? p.type : 'allg';
-  const n = TYPES[t].steps.length;
+  const steps = Array.isArray(p.steps) && p.steps.length ? p.steps.map(x=>String(x||'Schritt')) : TYPES[t].steps.slice();
+  const n = steps.length;
   const sd = Array.isArray(p.stepData) ? p.stepData : [];
   const stepData = [];
   for (let i=0;i<n;i++){
@@ -320,7 +330,9 @@ function normalize(p, id){
       links: Array.isArray(s.links) ? s.links.filter(Boolean).map(l=>({id:l.id||uid(), url:String(l.url||''), label:String(l.label||'')})) : [],
       images: Array.isArray(s.images) ? s.images.filter(Boolean) : [],
       files: Array.isArray(s.files) ? s.files.filter(Boolean) : [],
-      doneAt: s.doneAt || ''
+      doneAt: s.doneAt || '',
+      ver: Math.max(1, Number(s.ver)|0),
+      history: Array.isArray(s.history) ? s.history.filter(Boolean) : []
     });
   }
   return {
@@ -331,10 +343,16 @@ function normalize(p, id){
     step: Math.max(0, Math.min(n, Number(p.step)|0)),
     state: p.state === 'abgebrochen' ? 'abgebrochen' : 'aktiv',
     createdAt: p.createdAt || Date.now(), updatedAt: p.updatedAt || Date.now(), doneAt: p.doneAt || '',
-    stepData
+    steps, stepData,
+    version: Math.max(1, Number(p.version)|0),
+    builtTop: Math.max(0, Math.min(n, Number(p.builtTop)|0)),
+    updates: Array.isArray(p.updates) ? p.updates.filter(Boolean) : []
   };
 }
-const nSteps = p => TYPES[p.type].steps.length;
+const nSteps = p => p.steps.length;
+const stepName = (p,i) => p.steps[i] || '';
+const emptyStep = () => ({notes:'', checklist:[], links:[], images:[], files:[], doneAt:'', ver:1, history:[]});
+const inUpdate = p => !isDone(p) && !isRuin(p) && p.builtTop > p.step+1;
 const isDone = p => p.step >= nSteps(p);
 const isRuin = p => p.state === 'abgebrochen';
 const statusOf = p => isRuin(p) ? 'ruin' : isDone(p) ? 'done' : 'build';
@@ -831,7 +849,13 @@ function addRoof(root, type, top, F){
   return g;
 }
 
-function buildingSig(p){ return [p.type,p.step,p.state,p.lot].join('|'); }
+function buildingSig(p){ return [p.type,p.step,p.state,p.lot,nSteps(p),p.builtTop,p.version,p.stepData.map(x=>x.ver).join('')].join('|'); }
+const VER_COLS = [0xf2f2ef, 0xe36b16, 0x2bb3a3, 0xe8b931, 0xd04c8f, 0x3d8bdb];
+const verMats = {};
+function verMat(v){ const k = v<=1 ? 0 : 1 + (v-2) % (VER_COLS.length-1); return verMats[k] || (verMats[k] = new THREE.MeshLambertMaterial({color:VER_COLS[k]})); }
+const oldMats = {};
+function oldMat(type){ if (oldMats[type]) return oldMats[type]; if (!facadeMaps[type]) facadeMaps[type] = canvasTex(c=>FAC[type].paint(c)); return oldMats[type] = new THREE.MeshLambertMaterial({map:facadeMaps[type], color:0xa3a3a3}); }
+const tarpMat = new THREE.MeshLambertMaterial({color:0x3f9a5c, transparent:true, opacity:.55, depthWrite:false});
 
 function buildBuilding(p){
   const F = FAC[p.type]; const {w,d,h} = F;
@@ -864,18 +888,25 @@ function buildBuilding(p){
     tagPick(root,p.id,count-1); floors.forEach((f,i)=>tagPick(f,p.id,i));
     return {root, floors, roof:null, info:{x:L.x,z:L.z,base,h,n:count,top:base+count*h}};
   }
-  const count = done ? n : p.step+1;
+  const count = done ? n : Math.max(p.step+1, p.builtTop);
   for (let i=0;i<count;i++){
     const fg = new THREE.Group(); fg.position.y = base + i*h; root.add(fg);
     const constructing = !done && i===p.step;
-    if (constructing){
+    const pending = !done && i>p.step;   // still standing from the old version, waiting for its update
+    if (pending){
+      const a = box(w,h,d,oldMat(p.type),0,h/2,0), t = box(w+.45,h-.1,d+.45,tarpMat,0,h/2,0); t.castShadow=false;
+      const l = box(w+.18,.18,d+.18,verMat(p.stepData[i].ver),0,h,0);
+      fg.add(a,t,l); fg.userData.solid=[a,t,l]; fg.userData.wallMat=oldMat(p.type);
+      for (const sx of [-1,1]) for (const sz of [-1,1]){ const pole=box(.12,h+.2,.12,M.scaffold,sx*(w/2+.35),h/2,sz*(d/2+.35)); fg.add(pole); }
+    } else if (constructing){
       const a = box(w-.1,h,d-.1,rohbauMat,0,h/2,0), b = box(w+.1,.18,d+.1,M.concrete,0,h,0);
       fg.add(a,b); fg.userData.solid=[a,b]; fg.userData.wallMat=rohbauMat;
       fg.add(makeScaffold(w,h,d));
     } else {
       const fm = facadeMat(p.type, (i + (R()*4|0))%4);
       const sol = [box(w,h,d,fm,0,h/2,0)];
-      if (p.type!=='app') sol.push(box(w+.18,.18,d+.18,M.ledge,0,h,0));
+      const v = p.stepData[i].ver;
+      if (p.type!=='app' || v>1) sol.push(box(w+.18,v>1?.3:.18,d+.18,verMat(v),0,h,0));
       if (i===0){ sol.push(box(1.5,2.1,.12,M.dark,0,1.05,d/2+.03)); }
       sol.forEach(m=>fg.add(m)); fg.userData.solid=sol; fg.userData.wallMat=fm;
       if (i===0) fg.add(box(2.4,.12,1,M.ledge,0,2.3,d/2+.5));
@@ -884,8 +915,16 @@ function buildBuilding(p){
   }
   const top = base + count*h;
   let roof = null;
-  if (done){ roof = addRoof(root,p.type,top,F); roof.userData.baseY = top; tagPick(roof,p.id,n-1); }
-  else {
+  if (done || p.builtTop >= n){
+    roof = addRoof(root,p.type,top,F); roof.userData.baseY = top;
+    if (p.version > 1){ // version flag on the roof
+      roof.add(box(.09,3.2,.09,M.pole,-w/2+.5,1.6,d/2-.5));
+      const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.3,.75), verMat(p.version)); flag.material.side = THREE.DoubleSide;
+      flag.position.set(-w/2+.5+.68,2.8,d/2-.5); roof.add(flag);
+    }
+    tagPick(roof,p.id,n-1);
+  }
+  if (!done){
     const fence = makeFence(); tagPick(fence,p.id,p.step); root.add(fence);
     const crane = makeCrane(top+6, top+1.2); crane.position.set(w/2+1.7,0,-d/2-1.5); crane.userData.phase=R()*6; tagPick(crane,p.id,p.step); root.add(crane);
     root.userData.crane = crane;
@@ -908,7 +947,7 @@ function syncBuildings(){
     buildings.set(p.id, {group:built.root, floors:built.floors, roof:built.roof, sig, info:built.info, step:p.step, state:p.state});
     if (!reduceMotion && S.loaded){
       const from = !old ? 0 : (old.state===p.state && p.step>prevStep ? prevStep : null);
-      if (from!==null) built.floors.forEach((f,i)=>{ if(i>=from){ f.scale.y=.01; anims.push({o:f, t0:performance.now()+(i-from)*140, dur:650}); } });
+      if (from!==null) built.floors.forEach((f,i)=>{ if(i>=from && (!old || i<=p.step)){ f.scale.y=.01; anims.push({o:f, t0:performance.now()+(i-from)*140, dur:650}); } });
       if (old && old.state===p.state && isDone(p) && prevStep < nSteps(p)) burst(built.info);
     }
   }
@@ -1014,7 +1053,7 @@ function boardTexture(p, i){
   c.fillStyle = '#FBFAF6'; c.fillRect(18,18,604,344);
   c.fillStyle = T.color; c.fillRect(18,18,604,62);
   c.fillStyle = '#fff'; c.font = '700 34px Figtree, system-ui, sans-serif';
-  c.fillText(floorTag(i)+' · '+T.steps[i], 36, 62);
+  c.fillText(floorTag(i)+' · '+stepName(p,i), 36, 62);
   const status = isRuin(p) ? 'abgebrochen' : i < p.step ? 'erledigt' : i===p.step ? 'im Bau' : 'geplant';
   c.font = '600 20px Figtree, system-ui, sans-serif'; c.textAlign='right'; c.fillText(status, 604, 58); c.textAlign='left';
   c.fillStyle = '#1d2733'; c.font = '400 21px Figtree, system-ui, sans-serif';
@@ -1200,7 +1239,7 @@ canvas.addEventListener('pointermove', e=>{
     const pk = down ? null : pickAt(e.clientX, e.clientY); const tt = $('#tooltip');
     if (pk && S.projects.has(pk.pid)){
       const p = S.projects.get(pk.pid);
-      tt.innerHTML = esc(p.name)+'<small>'+floorTag(pk.step)+' · '+esc(TYPES[p.type].steps[pk.step]||'')+'</small>';
+      tt.innerHTML = esc(p.name)+'<small>'+floorTag(pk.step)+' · '+esc(stepName(p,pk.step))+'</small>';
       tt.style.left = e.clientX+'px'; tt.style.top = e.clientY+'px'; tt.hidden=false; canvas.style.cursor='pointer';
     } else { tt.hidden=true; canvas.style.cursor=''; }
   });
@@ -1238,8 +1277,9 @@ function deadlineInfo(p){
 }
 function statusChip(p){
   const n = nSteps(p);
-  if (isRuin(p)) return '<span class="chip ruin">Ruine · bei '+esc(TYPES[p.type].steps[Math.min(p.step,n-1)])+' abgebrochen</span>';
+  if (isRuin(p)) return '<span class="chip ruin">Ruine · bei '+esc(stepName(p,Math.min(p.step,n-1)))+' abgebrochen</span>';
   if (isDone(p)) return '<span class="chip done">Fertig'+(p.doneAt?' seit '+fmtDate(p.doneAt):'')+'</span>';
+  if (inUpdate(p)) return '<span class="chip build">Umbau v'+p.version+' · '+floorTag(p.step)+' von '+n+'</span>';
   return '<span class="chip build">Baustelle · '+floorTag(p.step)+' von '+n+'</span>';
 }
 
@@ -1298,14 +1338,14 @@ const curP = () => S.projects.get(S.selId);
 
 function renderPanel(){
   const p = curP(); if(!p) return;
-  const T = TYPES[p.type], n = T.steps.length, done=isDone(p), ruin=isRuin(p);
+  const T = TYPES[p.type], n = nSteps(p), done=isDone(p), ruin=isRuin(p), upd=inUpdate(p);
   const sel = Math.min(S.selStep, n-1);
   const dl = deadlineInfo(p);
   let h = '<div class="p-head" style="--tc:'+T.color+'">'
     + '<div class="p-top"><div class="eyebrow">'+typeIcon(p.type)+esc(T.label)+' · '+esc(T.style)+'</div>'
     + '<button class="btn small ghost" data-act="close" aria-label="Details schließen">Schließen</button></div>'
     + '<h2>'+esc(p.name)+'</h2>'
-    + '<div class="chips">'+statusChip(p)+'<span class="chip">Priorität: '+PRIO[p.priority]+'</span>'
+    + '<div class="chips">'+statusChip(p)+(p.version>1?'<span class="chip ver" style="--vc:#'+new THREE.Color(VER_COLS[1+(p.version-2)%(VER_COLS.length-1)]).getHexString()+'">Version '+p.version+'</span>':'')+'<span class="chip">Priorität: '+PRIO[p.priority]+'</span>'
     + (dl?'<span class="chip'+(dl.late?' late':'')+'">'+esc(dl.txt)+'</span>':'')
     + p.tags.map(t=>'<span class="chip tag">#'+esc(t)+'</span>').join('') + '</div>'
     + (p.desc?'<p class="desc">'+esc(p.desc)+'</p>':'')
@@ -1318,18 +1358,19 @@ function renderPanel(){
   for (let i=n-1;i>=0;i--){
     let cls, st;
     if (ruin){ if (i>=shown) continue; cls='ruined'; st = p.stepData[i].doneAt ? 'erledigt '+fmtDate(p.stepData[i].doneAt) : 'abgebrochen'; }
-    else if (i < p.step){ cls='done'; st='erledigt '+fmtDate(p.stepData[i].doneAt); }
-    else if (i === p.step){ cls='current'; st='im Bau'; }
+    else if (i < p.step){ cls='done'; st='erledigt '+fmtDate(p.stepData[i].doneAt)+(p.stepData[i].ver>1?' · v'+p.stepData[i].ver:''); }
+    else if (i === p.step){ cls='current'; st= upd || p.stepData[i].history.length ? 'im Umbau' : 'im Bau'; }
+    else if (i < p.builtTop){ cls='redo'; st='wird erneuert'; }
     else { cls='planned'; st='geplant'; }
-    h += '<button class="fl '+cls+(i===sel?' sel':'')+'" data-act="step" data-i="'+i+'"><span class="tagf">'+floorTag(i)+'</span><span>'+esc(T.steps[i])+'</span><span class="st">'+st+'</span></button>';
+    h += '<button class="fl '+cls+(i===sel?' sel':'')+'" data-act="step" data-i="'+i+'"><span class="tagf">'+floorTag(i)+'</span><span>'+esc(stepName(p,i))+'</span><span class="st">'+st+'</span></button>';
   }
   h += '<div class="ground"></div></div></section>';
   // selected step
   const sd = p.stepData[sel];
-  const stState = ruin ? 'Projekt abgebrochen' : sel < p.step ? 'Abgeschlossen am '+fmtDate(sd.doneAt) : sel===p.step ? 'In Arbeit – dieses Stockwerk ist gerade Baustelle' : 'Geplant – wird gebaut, sobald die Schritte darunter fertig sind';
+  const stState = ruin ? 'Projekt abgebrochen' : sel < p.step ? 'Abgeschlossen am '+fmtDate(sd.doneAt)+(sd.ver>1?' · Version '+sd.ver:'') : sel===p.step ? (sd.history.length ? 'Im Umbau für Version '+p.version+' – dieses Stockwerk wird gerade erneuert' : 'In Arbeit – dieses Stockwerk ist gerade Baustelle') : sel < p.builtTop ? 'Wird für Version '+p.version+' erneuert, sobald die Stockwerke darunter fertig sind' : 'Geplant – wird gebaut, sobald die Schritte darunter fertig sind';
   const cl = sd.checklist, clDone = cl.filter(c=>c.done).length;
-  h += '<section class="stepcard"><div class="step-h"><span class="ft">'+floorTag(sel)+'</span><h3>'+esc(T.steps[sel])+'</h3><span class="st">'+floorLong(sel)+' · '+stState+'</span></div>';
-  h += '<label class="field"><span>Notizen</span><textarea id="f-notes" data-act="notes" placeholder="Was gehört zu „'+esc(T.steps[sel])+'“? Gedanken, Entscheidungen, offene Fragen …">'+esc(sd.notes)+'</textarea></label>';
+  h += '<section class="stepcard"><div class="step-h"><span class="ft">'+floorTag(sel)+'</span><h3>'+esc(stepName(p,sel))+'</h3><span class="st">'+floorLong(sel)+' · '+stState+'</span></div>';
+  h += '<label class="field"><span>Notizen</span><textarea id="f-notes" data-act="notes" placeholder="Was gehört zu „'+esc(stepName(p,sel))+'“? Gedanken, Entscheidungen, offene Fragen …">'+esc(sd.notes)+'</textarea></label>';
   h += '<div class="blk"><div class="blk-h">Checkliste<small>'+clDone+' / '+cl.length+'</small></div>';
   if (cl.length) h += '<ul class="list">'+cl.map(c=>'<li class="li'+(c.done?' checked':'')+'"><label><input type="checkbox" data-act="ck" data-id="'+c.id+'"'+(c.done?' checked':'')+'><span>'+esc(c.t)+'</span></label><button class="x" data-act="ckdel" data-id="'+c.id+'" aria-label="Punkt löschen">×</button></li>').join('')+'</ul>';
   h += '<form class="addrow" data-form="ck"><input type="text" id="f-ck" placeholder="Neuer Punkt" aria-label="Neuer Checklistenpunkt"><button class="btn small">Hinzufügen</button></form></div>';
@@ -1348,22 +1389,82 @@ function renderPanel(){
   if (!ruin && !done && sel===p.step){
     const ready = cl.length && clDone===cl.length;
     h += '<div class="actions">'+(ready?'<span class="ready">Checkliste erledigt – bereit fürs nächste Stockwerk.</span>':'')
-      + '<button class="btn primary" data-act="complete">'+(p.step===n-1?'Projekt fertigstellen':'Schritt abschließen · nächstes Stockwerk')+'</button></div>';
+      + '<button class="btn primary" data-act="complete">'+(p.step===n-1?(p.version>1?'Version '+p.version+' fertigstellen':'Projekt fertigstellen'):'Schritt abschließen · nächstes Stockwerk')+'</button></div>';
+  }
+  if (sd.history.length){
+    h += '<details class="hist"><summary>Frühere Versionen dieses Stockwerks ('+sd.history.length+')</summary><ul class="list">'
+      + sd.history.slice().reverse().map(x=>'<li class="li" style="display:block"><b>v'+x.ver+'</b> · erledigt '+fmtDate(x.doneAt)+(x.checklist?' · '+esc(x.checklist):'')+(x.notes?'<div class="desc" style="margin-top:4px">'+esc(x.notes)+'</div>':'')+'</li>').join('')
+      + '</ul></details>';
+  }
+  if (!ruin){
+    const canUpdate = sel < p.step;
+    const canRemove = !done && sel >= p.step && n > 1 && !(sel < p.builtTop);
+    if (canUpdate || canRemove){
+      h += '<div class="actions">'
+        + (canUpdate ? '<button class="btn small" data-act="ask-update">Update ab diesem Stockwerk</button>' : '')
+        + (canRemove ? '<button class="btn small ghost danger" data-act="ask-rmstep">Schritt entfernen</button>' : '')
+        + '</div><div id="stepConfirm"></div>';
+    }
   }
   h += '</section>';
   // project actions
   h += '<section><div class="sec-h"><h3>Projekt</h3></div><div class="actions" id="projActions">'
     + '<button class="btn small" data-act="edit">Bearbeiten</button>'
+    + (done ? '<button class="btn small primary" data-act="ask-addstep">Wieder eröffnen · Schritt hinzufügen</button>' : (!ruin ? '<button class="btn small" data-act="ask-addstep">Schritt hinzufügen</button>' : ''))
     + (!ruin && p.step>0 ? '<button class="btn small" data-act="back">Einen Schritt zurück</button>' : '')
     + (ruin ? '<button class="btn small" data-act="resume">Wieder aufnehmen</button>' : (!done ? '<button class="btn small danger" data-act="ask-abandon">Projekt abbrechen</button>' : ''))
     + '<button class="btn small danger" data-act="ask-delete">Löschen</button></div>'
     + '<div id="confirmBox"></div>'
+    + (p.updates.length ? '<ul class="list vers">'+p.updates.slice().reverse().map(u=>'<li class="li" style="display:block"><b>'+(u.kind==='add'?'Erweiterung':'Version '+u.ver)+'</b> · '+esc(u.name||'')+'<div class="meta">'+(u.kind==='add'?'neues Stockwerk ':'ab ')+esc(u.floor||'')+' · gestartet '+fmtDate(u.at)+(u.doneAt?' · fertig '+fmtDate(u.doneAt):' · läuft')+'</div></li>').join('')+'</ul>' : '')
     + '<p class="empty-note" style="margin-top:10px">Angelegt am '+fmtDate(p.createdAt)+' · Grundstück '+(p.lot+1)+'</p></section>';
   $('#panelBody').innerHTML = h;
   $('#panelBody').querySelectorAll('img[data-ref]').forEach(async img=>{
     const ref = findRef(p, img.dataset.ref); if(!ref) return;
     const u = await fileUrl(ref); if (u) img.src = u; else img.alt = 'Bild nur in einem anderen Browser gespeichert';
   });
+}
+/* ---------- updates & added steps ---------- */
+function resetFrom(p, from, to){ // floors [from,to) were built and must be done again
+  for (let i=from;i<to;i++){
+    const sd = p.stepData[i];
+    if (sd.doneAt){
+      const c = sd.checklist.length ? sd.checklist.filter(x=>x.done).length+'/'+sd.checklist.length+' Punkte' : '';
+      sd.history.push({ver:sd.ver, doneAt:sd.doneAt, notes:sd.notes.slice(0,1500), checklist:c});
+    }
+    sd.doneAt = ''; sd.checklist.forEach(c=>c.done=false);
+  }
+}
+function startUpdate(p, from, name){
+  const n = nSteps(p), built = isDone(p) ? n : p.step;
+  p.builtTop = Math.max(p.builtTop, built);
+  p.version += 1;
+  resetFrom(p, from, built);
+  p.step = from; p.doneAt = '';
+  p.updates.push({kind:'update', ver:p.version, name:name||'Update', floor:floorTag(from)+' '+stepName(p,from), at:new Date().toISOString(), doneAt:''});
+  S.selStep = from;
+  persist(p); syncBuildings(); renderPanel(); updateStats(); flyToProject(p.id, from);
+  toast('Update v'+p.version+' gestartet – '+floorTag(from)+' ist jetzt Baustelle');
+}
+function insertStep(p, pos, name){
+  const n = nSteps(p), done = isDone(p), built = done ? n : p.step;
+  p.steps.splice(pos, 0, name); p.stepData.splice(pos, 0, emptyStep());
+  if (p.builtTop > pos) p.builtTop += 1;
+  if (pos < built){
+    // inserted below finished floors: those above it become an update
+    p.version += 1;
+    resetFrom(p, pos+1, built+1);
+    p.builtTop = Math.max(p.builtTop, built+1);
+    p.step = pos;
+    p.updates.push({kind:'update', ver:p.version, name:'Neuer Schritt: '+name, floor:floorTag(pos)+' '+name, at:new Date().toISOString(), doneAt:''});
+  } else {
+    if (done) p.updates.push({kind:'add', ver:p.version, name:name, floor:floorTag(pos), at:new Date().toISOString(), doneAt:''});
+    if (pos <= p.step) p.step = pos;
+  }
+  p.stepData[pos].ver = p.version;
+  p.doneAt = isDone(p) ? p.doneAt : '';
+  S.selStep = pos;
+  persist(p); syncBuildings(); renderPanel(); updateStats(); flyToProject(p.id, pos);
+  toast(done ? 'Wieder eröffnet – '+floorTag(pos)+' „'+name+'“ ist jetzt Baustelle' : '„'+name+'“ eingefügt');
 }
 function safeUrl(u){ return /^https?:\/\//i.test(u) ? u : 'https://'+u.replace(/^\/+/,''); }
 function findRef(p,id){ if (p.cover && p.cover.id===id) return p.cover; for(const sd of p.stepData){ for(const r of sd.images.concat(sd.files)) if(r.id===id) return r; } return null; }
@@ -1393,12 +1494,14 @@ $('#panelBody').addEventListener('submit', e=>{
   e.preventDefault(); const p=curP(); if(!p) return;
   const sd = p.stepData[Math.min(S.selStep,nSteps(p)-1)];
   if (e.target.dataset.form==='ck'){ const v=$('#f-ck').value.trim(); if(!v) return; sd.checklist.push({id:uid(),t:v,done:false}); persist(p); renderPanel(); $('#f-ck').focus(); }
+  if (e.target.dataset.form==='update'){ startUpdate(p, Math.min(S.selStep,nSteps(p)-1), $('#f-upd').value.trim()); return; }
+  if (e.target.dataset.form==='addstep'){ const nm=$('#f-newstep').value.trim(); if(!nm) return; insertStep(p, +$('#f-newpos').value, nm); return; }
   if (e.target.dataset.form==='lk'){ const u=$('#f-lk').value.trim(); if(!u) return; sd.links.push({id:uid(),url:u,label:$('#f-lkl').value.trim()}); persist(p); renderPanel(); }
 });
 $('#panelBody').addEventListener('click', async e=>{
   const el = e.target.closest('[data-act]'); if(!el) return;
   const act = el.dataset.act, p = curP(); if(!p) return;
-  const n = nSteps(p), sd = p.stepData[Math.min(S.selStep,n-1)];
+  const n = nSteps(p), sel = Math.min(S.selStep,n-1), sd = p.stepData[sel], done = isDone(p);
   switch(act){
     case 'close': closePanel(); break;
     case 'step': S.selStep = +el.dataset.i; renderPanel(); updateSelectionMarker(); if (S.selStep < (buildings.get(p.id)||{info:{n:0}}).info.n) flyToProject(p.id, S.selStep); break;
@@ -1411,8 +1514,13 @@ $('#panelBody').addEventListener('click', async e=>{
     case 'stldl': { const r=findRef(p,el.dataset.id); try{ const buf=await fileBuffer(r); await downloadsApi.save({filename:r.name, data:buf}); }catch(err){ if(err&&err.message) toast(err.message); } break; }
     case 'complete': {
       p.stepData[p.step].doneAt = new Date().toISOString();
+      p.stepData[p.step].ver = p.version;
       p.step++;
-      if (p.step >= n){ p.doneAt = new Date().toISOString(); toast('Fertiggestellt: '+p.name); } else toast(floorTag(p.step)+' · '+TYPES[p.type].steps[p.step]+' ist jetzt Baustelle');
+      if (p.step >= n){
+        p.doneAt = new Date().toISOString(); p.builtTop = 0;
+        p.updates.forEach(u=>{ if(!u.doneAt) u.doneAt = p.doneAt; });
+        toast(p.version>1 ? 'Version '+p.version+' fertiggestellt: '+p.name : 'Fertiggestellt: '+p.name);
+      } else toast(floorTag(p.step)+' · '+stepName(p,p.step)+' ist jetzt Baustelle');
       S.selStep = Math.min(p.step, n-1);
       persist(p); syncBuildings(); renderPanel(); updateStats(); flyToProject(p.id, S.selStep); break;
     }
@@ -1423,7 +1531,34 @@ $('#panelBody').addEventListener('click', async e=>{
     case 'resume': p.state='aktiv'; persist(p); syncBuildings(); renderPanel(); updateStats(); toast('Die Baustelle läuft wieder.'); break;
     case 'ask-abandon': $('#confirmBox').innerHTML = '<div class="confirm" style="margin-top:10px"><span>Projekt abbrechen? Es bleibt als Ruine in der Stadt stehen.</span><button class="btn small danger" data-act="abandon">Ja, abbrechen</button><button class="btn small" data-act="nope">Nein</button></div>'; break;
     case 'ask-delete': $('#confirmBox').innerHTML = '<div class="confirm" style="margin-top:10px"><span>Projekt mit allen Notizen und Dateien endgültig löschen?</span><button class="btn small danger" data-act="delete">Endgültig löschen</button><button class="btn small" data-act="nope">Abbrechen</button></div>'; break;
-    case 'nope': $('#confirmBox').innerHTML=''; break;
+    case 'nope': $('#confirmBox').innerHTML=''; if ($('#stepConfirm')) $('#stepConfirm').innerHTML=''; break;
+    case 'ask-update': {
+      const last = done ? n : p.step;
+      $('#stepConfirm').innerHTML = '<form class="confirm upd" data-form="update" style="margin-top:4px;display:grid;gap:8px;background:var(--accent-soft)">'
+        + '<span><b>Update v'+(p.version+1)+' ab '+floorLong(sel)+'</b>: Die Stockwerke '+floorTag(sel)+' bis '+floorTag(last-1)+' werden erneut durchlaufen. Checklisten werden zurückgesetzt, Notizen, Bilder und Dateien bleiben. Das Gebäude wird zur Baustelle und bekommt danach einen neuen Look.</span>'
+        + '<input type="text" id="f-upd" placeholder="Was ändert sich? z. B. neues Design" aria-label="Name des Updates">'
+        + '<div class="actions"><button class="btn small primary">Update starten</button><button type="button" class="btn small" data-act="nope">Abbrechen</button></div></form>';
+      $('#f-upd').focus(); break;
+    }
+    case 'ask-addstep': {
+      let opts = '<option value="'+n+'">Ganz oben – nach „'+esc(stepName(p,n-1))+'“</option>';
+      for (let i=n-1;i>=1;i--) opts += '<option value="'+i+'">Zwischen „'+esc(stepName(p,i-1))+'“ und „'+esc(stepName(p,i))+'“</option>';
+      $('#confirmBox').innerHTML = '<form class="confirm" data-form="addstep" style="margin-top:10px;display:grid;gap:8px;background:var(--accent-soft)">'
+        + '<span>'+(done?'Das Projekt wird wieder eröffnet und das Gebäude wird zur Baustelle.':'Neuen Schritt in den Bauplan einfügen.')+' Liegt der neue Schritt unter bereits fertigen Stockwerken, werden diese als Update erneut durchlaufen.</span>'
+        + '<input type="text" id="f-newstep" placeholder="Name des Schritts, z. B. Zweite Farbe" aria-label="Name des neuen Schritts" required>'
+        + '<select id="f-newpos" aria-label="Position">'+opts+'</select>'
+        + '<div class="actions"><button class="btn small primary">'+(done?'Wieder eröffnen':'Einfügen')+'</button><button type="button" class="btn small" data-act="nope">Abbrechen</button></div></form>';
+      $('#f-newstep').focus(); break;
+    }
+    case 'ask-rmstep': $('#stepConfirm').innerHTML = '<div class="confirm" style="margin-top:4px"><span>„'+esc(stepName(p,sel))+'“ mit Notizen und Dateien aus dem Bauplan entfernen?</span><button class="btn small danger" data-act="rmstep">Entfernen</button><button class="btn small" data-act="nope">Abbrechen</button></div>'; break;
+    case 'rmstep': {
+      const i = Math.min(S.selStep,n-1); const old = p.stepData[i];
+      [...old.images, ...old.files].forEach(deleteFile);
+      p.steps.splice(i,1); p.stepData.splice(i,1);
+      if (p.step >= nSteps(p)){ p.doneAt = p.doneAt || new Date().toISOString(); p.builtTop = 0; }
+      S.selStep = Math.min(i, nSteps(p)-1);
+      persist(p); syncBuildings(); renderPanel(); updateStats(); flyToProject(p.id, S.selStep); toast('Schritt entfernt'); break;
+    }
     case 'abandon': p.state='abgebrochen'; persist(p); syncBuildings(); renderPanel(); updateStats(); toast('Projekt abgebrochen – die Ruine bleibt stehen.'); break;
     case 'delete': { const name=p.name; closePanel(); await removeProject(p); syncBuildings(); updateStats(); $('#empty').hidden = S.projects.size>0; toast(name+' gelöscht'); break; }
     case 'edit': openForm(p); break;
@@ -1532,8 +1667,8 @@ function renderList(){
   const list = Array.from(S.projects.values()).filter(p=>(S.fType==='alle'||p.type===S.fType) && (S.fState==='alle'||statusOf(p)===S.fState) && (!q || p.name.toLowerCase().includes(q) || p.tags.some(t=>t.toLowerCase().includes(q)) || p.desc.toLowerCase().includes(q)))
     .sort((a,b)=> stRank[statusOf(a)]-stRank[statusOf(b)] || prioRank[a.priority]-prioRank[b.priority] || (a.deadline||'9999').localeCompare(b.deadline||'9999') || a.name.localeCompare(b.name,'de'));
   $('#rows').innerHTML = list.length ? list.map(p=>{
-    const T=TYPES[p.type], n=T.steps.length, st=statusOf(p), dl=deadlineInfo(p);
-    const sub = st==='ruin' ? 'Ruine · '+T.steps[Math.min(p.step,n-1)] : st==='done' ? 'Fertig' : floorTag(p.step)+' · '+T.steps[p.step];
+    const T=TYPES[p.type], n=nSteps(p), st=statusOf(p), dl=deadlineInfo(p);
+    const sub = st==='ruin' ? 'Ruine · '+stepName(p,Math.min(p.step,n-1)) : st==='done' ? 'Fertig'+(p.version>1?' · v'+p.version:'') : (inUpdate(p)?'Umbau v'+p.version+' · ':'')+floorTag(p.step)+' · '+stepName(p,p.step);
     return '<button class="row" data-id="'+p.id+'" style="--tc:'+(st==='ruin'?'#7a726b':T.color)+'">'+typeIcon(p.type)+'<div style="min-width:0"><div class="t">'+esc(p.name)+'</div><div class="s">'+esc(sub)+(dl?' · <span style="color:'+(dl.late?'var(--danger)':'inherit')+'">'+esc(dl.txt)+'</span>':'')+'</div><div class="bar"><i style="width:'+Math.round(Math.min(p.step,n)/n*100)+'%"></i></div></div><div class="r">'+Math.min(p.step,n)+'/'+n+'<br>'+PRIO[p.priority]+'</div></button>';
   }).join('') : '<p class="empty-note">'+(S.projects.size?'Keine Projekte passen zu deiner Suche.':'Noch keine Projekte angelegt.')+'</p>';
 }
