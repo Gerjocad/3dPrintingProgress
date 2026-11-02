@@ -281,6 +281,7 @@ pre.json{max-height:40vh;overflow:auto;background:var(--surface-2);border-radius
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
 (function(){
 "use strict";
@@ -1568,9 +1569,9 @@ function renderPanel(){
   h += '<div class="actions"><label class="btn small upl">Bild hochladen<input type="file" id="f-img" accept="image/*" multiple data-act="imgup"></label><span class="empty-note">oder Bild kopieren und hier mit <kbd>Strg</kbd>+<kbd>V</kbd> einfügen</span></div></div>';
   if (p.type==='druck'){
     h += '<div class="blk"><div class="blk-h">STL-Dateien<small>'+sd.files.length+'</small></div>';
-    if (sd.files.length) h += '<ul class="list">'+sd.files.map(r=>'<li class="li"><span class="name">'+esc(r.name)+'</span><span class="meta">'+fmtSize(r.size)+'</span><button class="btn small" data-act="stl" data-id="'+esc(r.id)+'">3D ansehen</button>'+(downloadsApi?'<button class="btn small ghost" data-act="stldl" data-id="'+esc(r.id)+'" aria-label="Herunterladen">Laden</button>':'')+'<button class="x" data-act="stldel" data-id="'+esc(r.id)+'" aria-label="Datei löschen">×</button></li>').join('')+'</ul>';
+    if (sd.files.length) h += '<ul class="list">'+sd.files.map(r=>'<li class="li"><span class="name">'+esc(r.name)+'</span><span class="meta">'+fmtSize(r.size)+'</span><button class="btn small" data-act="stl" data-id="'+esc(r.id)+'">3D ansehen</button>'+'<button class="btn small ghost" data-act="stldl" data-id="'+esc(r.id)+'" aria-label="Herunterladen">Laden</button>'+'<button class="x" data-act="stldel" data-id="'+esc(r.id)+'" aria-label="Datei löschen">×</button></li>').join('')+'</ul>';
     else h += '<p class="empty-note">Lade dein Modell hoch, um es hier direkt in 3D zu drehen und zu prüfen.</p>';
-    h += '<div><label class="btn small upl">STL hochladen<input type="file" id="f-stl" accept=".stl,model/stl" multiple data-act="stlup"></label></div></div>';
+    h += '<div class="actions"><label class="btn small upl">STL hochladen<input type="file" id="f-stl" accept=".stl,model/stl" multiple data-act="stlup"></label>'+(sd.files.length>1?'<button class="btn small" data-act="zipstep">Alle '+sd.files.length+' als ZIP laden</button>':'')+'</div></div>';
   }
   if (!ruin && !done && sel===p.step){
     const ready = cl.length && clDone===cl.length;
@@ -1599,6 +1600,7 @@ function renderPanel(){
   const canAnnex = !sub && !ruin && projectDone(p) && p.annexes.length < maxAnnexes(p);
   if (sub) h += '<section><div class="sec-h"><h3>'+(p.kind==='arm'?'Zweig':'Anbau')+'</h3></div><div class="actions" id="projActions">'
     + '<button class="btn small" data-act="ask-rename">Umbenennen</button>'
+    + (allStl(curOwner()).length ? '<button class="btn small" data-act="zipall">Alle STL des Projekts als ZIP ('+allStl(curOwner()).length+')</button>' : '')
     + (done ? '<button class="btn small primary" data-act="ask-addstep">Wieder eröffnen · Schritt hinzufügen</button>' : '<button class="btn small" data-act="ask-addstep">Schritt hinzufügen</button>')
     + (p.step>0 ? '<button class="btn small" data-act="back">Einen Schritt zurück</button>' : '')
     + (p.kind==='annex' ? '<button class="btn small danger" data-act="ask-rmannex">Anbau abreißen</button>' : '<button class="btn small danger" data-act="ask-unbranch">Verzweigung aufheben</button>')
@@ -1606,6 +1608,7 @@ function renderPanel(){
   else h += '<section><div class="sec-h"><h3>Projekt</h3></div><div class="actions" id="projActions">'
     + '<button class="btn small" data-act="edit">Bearbeiten</button>'
     + (canAnnex ? '<button class="btn small primary" data-act="ask-annex">Anbau für Update</button>' : '')
+    + (allStl(p).length ? '<button class="btn small" data-act="zipall">Alle STL als ZIP ('+allStl(p).length+')</button>' : '')
     + (hasBranch ? '' : done ? '<button class="btn small'+(canAnnex?'':' primary')+'" data-act="ask-addstep">Wieder eröffnen · Schritt hinzufügen</button>' : (!ruin ? '<button class="btn small" data-act="ask-addstep">Schritt hinzufügen</button>' : ''))
     + (!ruin && !hasBranch && p.step>0 ? '<button class="btn small" data-act="back">Einen Schritt zurück</button>' : '')
     + (ruin ? '<button class="btn small" data-act="resume">Wieder aufnehmen</button>' : (!projectDone(p) ? '<button class="btn small danger" data-act="ask-abandon">Projekt abbrechen</button>' : ''))
@@ -1622,6 +1625,49 @@ function renderPanel(){
     const u = await fileUrl(ref); if (u) img.src = u; else img.alt = 'Bild nur in einem anderen Browser gespeichert';
   });
 }
+/* ---------- downloads: single files and ZIP archives ---------- */
+const cleanName = t => String(t).replace(/[\\/:*?"<>|]+/g,'-').replace(/\s+/g,' ').trim().slice(0,80) || 'Datei';
+async function saveFile(filename, data){
+  if (downloadsApi){
+    try { await downloadsApi.save({filename, data}); return true; }
+    catch(err){ if (err && (err.code==='declined' || err.code==='cancelled' || err.code==='canceled')) return false; toast('Download nicht möglich: '+(err && err.message || 'unbekannter Fehler')); return false; }
+  }
+  // outside claude.ai: a plain browser download
+  const url = URL.createObjectURL(data instanceof Blob ? data : new Blob([data]));
+  const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 4000); return true;
+}
+// every STL of a project, sorted into one folder per floor (and per annex / branch)
+function allStl(p){
+  const out = [];
+  const add = (u, off, prefix) => u.stepData.forEach((sd,i)=>sd.files.forEach(r=>out.push({ref:r, path:prefix+cleanName(floorTag(i+off)+' '+stepName(u,i))+'/'+cleanName(r.name)})));
+  add(p, 0, p.branch || p.annexes.length ? 'Hauptgebäude/' : '');
+  if (p.branch) p.branch.arms.forEach((a,k)=>add(a, p.branch.at, cleanName('Zweig '+(k?'B':'A')+' - '+a.name)+'/'));
+  p.annexes.forEach(a=>add(a, 0, cleanName('Anbau - '+a.name)+'/'));
+  return out;
+}
+async function downloadZip(filename, entries){
+  if (!entries.length){ toast('Keine STL-Dateien vorhanden.'); return; }
+  if (!window.JSZip){ toast('ZIP-Funktion konnte nicht geladen werden.'); return; }
+  const zip = new JSZip(), used = new Set(); let missing = 0;
+  toast('ZIP wird erstellt … (0/'+entries.length+')');
+  for (let k=0;k<entries.length;k++){
+    const e = entries[k];
+    try {
+      const buf = await fileBuffer(e.ref);
+      let path = e.path, n = 2;
+      while (used.has(path.toLowerCase())) path = e.path.replace(/(\.[^./]+)?$/, m=>' ('+(n++)+')'+m);
+      used.add(path.toLowerCase());
+      zip.file(path, buf);
+    } catch(err){ missing++; }
+    toast('ZIP wird erstellt … ('+(k+1)+'/'+entries.length+')');
+  }
+  if (missing === entries.length){ toast('Die Dateien konnten nicht geladen werden.'); return; }
+  const blob = await zip.generateAsync({type:'blob', compression:'DEFLATE', compressionOptions:{level:6}});
+  const ok = await saveFile(filename, blob);
+  if (ok) toast(missing ? 'ZIP bereit – '+missing+' Datei(en) nicht gefunden' : 'ZIP mit '+(entries.length)+' Dateien bereit');
+}
+
 /* ---------- branch & annex ---------- */
 function createBranch(p, nameA, nameB){
   const X = p.step, now = new Date().toISOString();
@@ -1787,7 +1833,10 @@ $('#panelBody').addEventListener('click', async e=>{
     case 'stldel': { const r=sd.files.find(r=>r.id===el.dataset.id); sd.files=sd.files.filter(r=>r.id!==el.dataset.id); deleteFile(r); persist(p); renderPanel(); break; }
     case 'zoom': { const src = el.getAttribute('src'); if(src) openModal('<div class="lightbox"><img src="'+esc(src)+'" alt="'+esc(el.alt)+'"></div><div class="actions"><button class="btn" data-m="close">Schließen</button></div>'); break; }
     case 'stl': openStl(findRef(p, el.dataset.id)); break;
-    case 'stldl': { const r=findRef(p,el.dataset.id); try{ const buf=await fileBuffer(r); await downloadsApi.save({filename:r.name, data:buf}); }catch(err){ if(err&&err.message) toast(err.message); } break; }
+    case 'stldl': { const r=findRef(p,el.dataset.id); try{ const buf=await fileBuffer(r); await saveFile(r.name, buf); }catch(err){ if(err&&err.message) toast(err.message); } break; }
+    case 'zipstep': { const own = curOwner();
+      await downloadZip(cleanName(own.name)+' - '+cleanName(uTag(sel)+' '+stepName(p,sel))+'.zip', sd.files.map(r=>({ref:r, path:r.name}))); break; }
+    case 'zipall': { const own = curOwner(); await downloadZip(cleanName(own.name)+' - alle STL.zip', allStl(own)); break; }
     case 'complete': {
       p.stepData[p.step].doneAt = new Date().toISOString();
       p.stepData[p.step].ver = p.version;
