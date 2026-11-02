@@ -124,6 +124,7 @@ button,input,textarea,select{font:inherit;color:inherit}
 .vers{margin-top:12px}
 .vers .meta{white-space:normal}
 .rows-inline{display:grid;gap:6px}
+kbd{font:600 11px var(--f-mono);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 4px;background:var(--surface)}
 .fl.ruined{background:color-mix(in srgb,#6b6560 22%,var(--surface))}
 .fl.roof{cursor:default;background:transparent;border:0;border-bottom:3px solid var(--tc);border-radius:0;font-weight:700}
 .fl.sel{outline:2px solid var(--fg);outline-offset:-2px}
@@ -1564,7 +1565,7 @@ function renderPanel(){
   h += '<form class="addrow" data-form="lk"><input type="url" id="f-lk" placeholder="https://…" aria-label="Link-Adresse"><input type="text" id="f-lkl" placeholder="Titel (optional)" aria-label="Link-Titel"><button class="btn small">+</button></form></div>';
   h += '<div class="blk"><div class="blk-h">Bilder<small>'+sd.images.length+'</small></div>';
   if (sd.images.length) h += '<div class="thumbs">'+sd.images.map(r=>'<div class="thumb"><img data-ref="'+esc(r.id)+'" data-act="zoom" alt="'+esc(r.name)+'"><button class="x" data-act="imgdel" data-id="'+esc(r.id)+'" aria-label="Bild löschen">×</button></div>').join('')+'</div>';
-  h += '<div><label class="btn small upl">Bild hochladen<input type="file" id="f-img" accept="image/*" multiple data-act="imgup"></label></div></div>';
+  h += '<div class="actions"><label class="btn small upl">Bild hochladen<input type="file" id="f-img" accept="image/*" multiple data-act="imgup"></label><span class="empty-note">oder Bild kopieren und hier mit <kbd>Strg</kbd>+<kbd>V</kbd> einfügen</span></div></div>';
   if (p.type==='druck'){
     h += '<div class="blk"><div class="blk-h">STL-Dateien<small>'+sd.files.length+'</small></div>';
     if (sd.files.length) h += '<ul class="list">'+sd.files.map(r=>'<li class="li"><span class="name">'+esc(r.name)+'</span><span class="meta">'+fmtSize(r.size)+'</span><button class="btn small" data-act="stl" data-id="'+esc(r.id)+'">3D ansehen</button>'+(downloadsApi?'<button class="btn small ghost" data-act="stldl" data-id="'+esc(r.id)+'" aria-label="Herunterladen">Laden</button>':'')+'<button class="x" data-act="stldel" data-id="'+esc(r.id)+'" aria-label="Datei löschen">×</button></li>').join('')+'</ul>';
@@ -1714,14 +1715,36 @@ $('#panelBody').addEventListener('change', async e=>{
   const sd = p.stepData[Math.min(S.selStep,nSteps(p)-1)];
   if (t.dataset.act==='ck'){ const c=sd.checklist.find(c=>c.id===t.dataset.id); if(c){ c.done=t.checked; persist(p); renderPanel(); } }
   if (t.dataset.act==='imgup' || t.dataset.act==='stlup'){
-    const kind = t.dataset.act==='imgup' ? 'image' : 'stl';
     const files = Array.from(t.files||[]); t.value='';
-    for (const f of files){
-      toast(f.name+' wird hochgeladen …');
-      try { const ref = await uploadFile(f, kind); const pp = S.projects.get(p.id); if(!pp) return; const s = pp.stepData[Math.min(S.selStep,nSteps(pp)-1)]; (kind==='image'?s.images:s.files).push(ref); persist(pp); renderPanel(); toast(f.name+' gespeichert'); }
-      catch(err){ toast(err.message || 'Upload fehlgeschlagen.'); }
-    }
+    addFiles(files, t.dataset.act==='imgup' ? 'image' : 'stl');
   }
+});
+// upload files into the step that is open right now
+async function addFiles(files, kind){
+  const u = curP(); if (!u) return;
+  const idx = Math.min(S.selStep, nSteps(u)-1);
+  for (const f of files){
+    toast(f.name+' wird hochgeladen …');
+    try {
+      const ref = await uploadFile(f, kind);
+      const sd = u.stepData[idx]; if (!sd) return;
+      (kind==='image'?sd.images:sd.files).push(ref); persist(u);
+      if (curP()===u) renderPanel();
+      toast(kind==='image' ? 'Bild zu '+uTag(idx)+' · '+stepName(u,idx)+' hinzugefügt' : f.name+' gespeichert');
+    } catch(err){ toast(err.message || 'Upload fehlgeschlagen.'); }
+  }
+}
+// Ctrl/Cmd+V with an image on the clipboard adds it to the open floor
+document.addEventListener('paste', e=>{
+  if (!S.selId || !$('#modal').hidden) return;
+  const items = Array.from((e.clipboardData && e.clipboardData.items) || []);
+  const imgs = items.filter(it=>it.kind==='file' && /^image\//.test(it.type)).map(it=>it.getAsFile()).filter(Boolean);
+  if (!imgs.length) return;           // plain text pastes stay untouched
+  e.preventDefault();
+  const stamp = new Date().toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).replace(/[.:, ]+/g,'-');
+  const files = imgs.map((f,k)=>{ const ext = (f.type.split('/')[1]||'png').replace('jpeg','jpg').replace('svg+xml','svg');
+    try { return new File([f], 'Eingefügt-'+stamp+(imgs.length>1?'-'+(k+1):'')+'.'+ext, {type:f.type}); } catch(err){ return f; } });
+  addFiles(files, 'image');
 });
 $('#panelBody').addEventListener('submit', e=>{
   e.preventDefault(); const p=curP(); if(!p) return;
