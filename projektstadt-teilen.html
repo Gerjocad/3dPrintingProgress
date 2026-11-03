@@ -2056,10 +2056,24 @@ function renderPanel(){
 }
 /* ---------- downloads: single files and ZIP archives ---------- */
 const cleanName = t => String(t).replace(/[\\/:*?"<>|]+/g,'-').replace(/\s+/g,' ').trim().slice(0,80) || 'Datei';
+// file types claude.ai lets a page offer for download; anything else (e.g. .stl) is packed into a ZIP
+const DL_OK = /\.(gif|png|jpe?g|webp|mp4|webm|mov|txt|json|md|docx|pptx|epub|csv|ttf|html|svg|pdf|xlsx|zip|fig)$/i;
+async function zipSingle(filename, data){
+  const zip = new JSZip(); zip.file(filename, data instanceof Blob ? await data.arrayBuffer() : data);
+  return zip.generateAsync({type:'blob', compression:'DEFLATE', compressionOptions:{level:6}});
+}
 async function saveFile(filename, data){
   if (downloadsApi){
-    try { await downloadsApi.save({filename, data}); return true; }
-    catch(err){ if (err && (err.code==='declined' || err.code==='cancelled' || err.code==='canceled')) return false; toast('Download nicht möglich: '+(err && err.message || 'unbekannter Fehler')); return false; }
+    let name = filename, payload = data, zipped = false;
+    if (!DL_OK.test(filename) && window.JSZip){ payload = await zipSingle(filename, data); name = filename.replace(/\.[^.]+$/,'')+'.zip'; zipped = true; }
+    try { await downloadsApi.save({filename:name, data:payload}); if (zipped) toast(filename+' als ZIP heruntergeladen (claude.ai erlaubt keine einzelnen .'+(filename.split('.').pop()||'')+'-Downloads)'); return true; }
+    catch(err){
+      if (err && (err.code==='declined' || err.code==='cancelled' || err.code==='canceled')) return false;
+      if (err && err.code==='rejected_extension' && !zipped && window.JSZip){
+        try { await downloadsApi.save({filename:filename.replace(/\.[^.]+$/,'')+'.zip', data:await zipSingle(filename, data)}); toast(filename+' als ZIP heruntergeladen'); return true; } catch(e2){ if (e2 && e2.code==='declined') return false; }
+      }
+      toast('Download nicht möglich: '+(err && err.message || 'unbekannter Fehler')); return false;
+    }
   }
   // outside claude.ai: a plain browser download
   const url = URL.createObjectURL(data instanceof Blob ? data : new Blob([data]));
