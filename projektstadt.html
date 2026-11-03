@@ -124,6 +124,8 @@ button,input,textarea,select{font:inherit;color:inherit}
 .vers{margin-top:12px}
 .vers .meta{white-space:normal}
 .rows-inline{display:grid;gap:6px}
+.flash{animation:flash 1.1s ease}
+@keyframes flash{0%,40%{box-shadow:0 0 0 3px var(--accent)}100%{box-shadow:0 0 0 3px transparent}}
 .pdfic{flex:none;font:700 10px var(--f-body);letter-spacing:.04em;color:#fff;background:#c4382a;border-radius:4px;padding:2px 5px}
 .modal-card.wide{width:min(900px,100%)}
 .pdfbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
@@ -1257,6 +1259,7 @@ function drawBinderClip(c, x, y, w){
 // builds the clipboard texture; returns the photo slots to fill once images have loaded
 function clipboardCanvas(u, i, off){
   const T = TYPES[u.type], sd = u.stepData[i];
+  const hots = [];   // clickable areas in canvas pixels
   const cv = document.createElement('canvas'); cv.width = CW; cv.height = CH; const c = cv.getContext('2d');
   // board
   const g = c.createLinearGradient(0,0,CW,CH); g.addColorStop(0,'#c99a63'); g.addColorStop(1,'#a87a45');
@@ -1319,6 +1322,8 @@ function clipboardCanvas(u, i, off){
   function drawPaper(kind, x, y, w, maxLines, tilt){
     const lines = Math.min(linesFor(kind, w, m), maxLines);
     const h = m.head + m.pad + lines*m.LH;
+    const hot = (lx, ly, lw, lh, act) => hots.push({x:x+lx, y:y+ly, w:lw, h:lh, act});
+    hot(0, 0, w, h, {t:'paper', kind});
     c.save(); c.translate(x+w/2, y+h/2); c.rotate(tilt); c.translate(-w/2, -h/2);
     c.shadowColor = 'rgba(0,0,0,.25)'; c.shadowBlur = 12; c.shadowOffsetY = 4;
     c.fillStyle = {notes:'#fdfcf7', check:'#ffe58a', stl:'#dcecfb', links:'#eef8ec', docs:'#f6ebe9'}[kind]; c.fillRect(0,0,w,h); c.shadowColor = 'transparent';
@@ -1327,7 +1332,8 @@ function clipboardCanvas(u, i, off){
     c.fillText({notes:'Notizen', check:'Checkliste · '+sd.checklist.filter(x=>x.done).length+'/'+sd.checklist.length, stl:'STL-Dateien · '+sd.files.length, docs:'Dokumente · '+sd.docs.length, links:'Links'}[kind], 58, Math.round(m.head*.68));
     c.font = '400 '+m.fs+'px Figtree, system-ui, sans-serif';
     const tx = 58, maxW = w-tx-24; let ty = m.head + m.pad/2 + Math.round(m.LH*.72);
-    const more = n => { if (n>0){ c.fillStyle = '#6b7480'; c.font = 'italic '+m.fs+'px Figtree, system-ui, sans-serif'; c.fillText('+ '+n+' weitere', tx, ty); } };
+    const more = n => { if (n>0){ c.fillStyle = '#6b7480'; c.font = 'italic '+m.fs+'px Figtree, system-ui, sans-serif'; c.fillText('+ '+n+' weitere', tx, ty); hot(tx-8, ty-m.LH*.8, maxW+16, m.LH, {t:'paper', kind}); } };
+    const itemHot = act => hot(tx-8, ty-m.LH*.8, maxW+16, m.LH, act);
     const box = Math.round(22*f);
     if (kind==='notes'){
       const all = wrapLines(c, notes, maxW, 400), show = all.slice(0, lines);
@@ -1340,7 +1346,7 @@ function clipboardCanvas(u, i, off){
         c.fillStyle = it.done ? '#6f6750' : '#26303b';
         const t = fitText(c, it.t, maxW-box-12); c.fillText(t, tx+box+12, ty);
         if (it.done){ const tw = c.measureText(t).width; c.strokeStyle = '#6f6750'; c.lineWidth = 2; c.beginPath(); c.moveTo(tx+box+12, ty-m.fs*.33); c.lineTo(tx+box+12+tw, ty-m.fs*.33); c.stroke(); }
-        ty += m.LH; });
+        itemHot({t:'check', id:it.id, done:it.done, label:it.t}); ty += m.LH; });
       more(items.length-n);
     } else if (kind==='docs'){
       const items = sd.docs, n = items.length > lines ? lines-1 : items.length;
@@ -1349,7 +1355,7 @@ function clipboardCanvas(u, i, off){
         c.fillStyle = '#fff'; c.font = '700 '+Math.round(11*Math.max(f,.8))+'px Figtree, system-ui, sans-serif'; c.fillText('PDF', tx+box*.18, ty-box*.28);
         c.fillStyle = '#26303b'; const sz = fmtSize(r.size||0); c.font = '500 '+Math.round(22*f)+'px JetBrains Mono, monospace'; const sw = c.measureText(sz).width;
         c.fillText(sz, tx+maxW-sw, ty); c.font = '400 '+m.fs+'px Figtree, system-ui, sans-serif';
-        c.fillText(fitText(c, r.name, maxW-sw-box*1.6-24), tx+box*1.6+12, ty); ty += m.LH; });
+        c.fillText(fitText(c, r.name, maxW-sw-box*1.6-24), tx+box*1.6+12, ty); itemHot({t:'pdf', id:r.id, label:r.name}); ty += m.LH; });
       more(items.length-n);
     } else if (kind==='stl'){
       const items = sd.files, n = items.length > lines ? lines-1 : items.length;
@@ -1357,11 +1363,11 @@ function clipboardCanvas(u, i, off){
         c.fillStyle = '#e36b16'; c.beginPath(); c.moveTo(tx+box/2,ty-box); c.lineTo(tx+box,ty); c.lineTo(tx,ty); c.closePath(); c.fill();
         c.fillStyle = '#26303b'; const sz = fmtSize(r.size||0); c.font = '500 '+Math.round(22*f)+'px JetBrains Mono, monospace'; const sw = c.measureText(sz).width;
         c.fillText(sz, tx+maxW-sw, ty); c.font = '400 '+m.fs+'px Figtree, system-ui, sans-serif';
-        c.fillText(fitText(c, r.name, maxW-sw-box-24), tx+box+12, ty); ty += m.LH; });
+        c.fillText(fitText(c, r.name, maxW-sw-box-24), tx+box+12, ty); itemHot({t:'stl', id:r.id, label:r.name}); ty += m.LH; });
       more(items.length-n);
     } else {
       const items = sd.links, n = items.length > lines ? lines-1 : items.length;
-      items.slice(0,n).forEach(l=>{ c.fillStyle = '#2a63b8'; c.fillText(fitText(c, '↗ '+(l.label||l.url.replace(/^https?:\/\//,'')), maxW), tx, ty); ty += m.LH; });
+      items.slice(0,n).forEach(l=>{ c.fillStyle = '#2a63b8'; c.fillText(fitText(c, '↗ '+(l.label||l.url.replace(/^https?:\/\//,'')), maxW), tx, ty); itemHot({t:'link', url:l.url, label:l.label||l.url}); ty += m.LH; });
       more(items.length-n);
     }
     c.restore();
@@ -1394,10 +1400,11 @@ function clipboardCanvas(u, i, off){
       const pw = Math.min(cellW-30, (cellH-40)*0.88), ph = pw/0.88;
       const cx = area.x + col*cellW + cellW/2, cy = area.y + row*cellH + cellH/2 + 10;
       slots.push({ref, cx, cy, pw, ph, rot:((k*7)%5-2)*.035});
+      hots.push({x:cx-pw/2, y:cy-ph/2, w:pw, h:ph, act:{t:'img', id:ref.id, label:ref.name}});
     });
     slots.forEach(s=>drawPolaroid(c, s, null));
   }
-  return {cv, slots};
+  return {cv, slots, hots};
 }
 function drawPolaroid(c, s, img){
   c.save(); c.translate(s.cx, s.cy); c.rotate(s.rot);
@@ -1412,7 +1419,7 @@ function drawPolaroid(c, s, img){
   c.restore();
 }
 function makeClipboard(u, i, off){
-  const {cv, slots} = clipboardCanvas(u, i, off);
+  const {cv, slots, hots} = clipboardCanvas(u, i, off);
   const tex = new THREE.CanvasTexture(cv); tex.anisotropy = 8;
   const g = new THREE.Group();
   const W = 3.6, H = W*CH/CW;
@@ -1420,7 +1427,7 @@ function makeClipboard(u, i, off){
   face.position.z = .045; g.add(face);
   const back = new THREE.Mesh(new THREE.BoxGeometry(W*.985,H*.985,.08), new THREE.MeshLambertMaterial({color:0x9a6d3c})); g.add(back);
   const clip = new THREE.Mesh(new THREE.BoxGeometry(W*.34,.32,.22), new THREE.MeshLambertMaterial({color:0x9aa3ad})); clip.position.set(0,H/2-.12,.1); g.add(clip);
-  g.userData.tex = tex;
+  g.userData.tex = tex; g.userData.hots = hots; g.userData.face = face;
   // always in front: nothing in the city (e.g. the crane) may cut through the clipboard
   g.renderOrder = 999;
   g.traverse(o=>{ if (o.material){ o.material.depthTest = false; o.material.depthWrite = false; o.renderOrder = 999 + (o===face ? 2 : o===clip ? 3 : 1); } });
@@ -1619,9 +1626,54 @@ function pickAt(cx, cy){
 }
 let down = null;
 canvas.addEventListener('pointerdown', e=>{ down = {x:e.clientX, y:e.clientY}; if (fly){ fly=null; controls.enabled=true; } closeMenu(); });
+/* ---------- clicking things on the clipboard ---------- */
+function clipHitAt(cx, cy){
+  const cl = cut.clip; if (!cl || !cl.g.userData.face) return null;
+  const r = canvas.getBoundingClientRect();
+  ndc.set(((cx-r.left)/r.width)*2-1, -((cy-r.top)/r.height)*2+1);
+  ray.setFromCamera(ndc, camera);
+  cl.g.updateMatrixWorld(true);
+  const hit = ray.intersectObject(cl.g.userData.face, false)[0];
+  if (!hit){ return ray.intersectObject(cl.g, true).length ? {act:{t:'board'}} : null; }
+  const px = hit.uv.x*CW, py = (1-hit.uv.y)*CH;
+  const hs = cl.g.userData.hots;
+  for (let k=hs.length-1;k>=0;k--){ const h = hs[k]; if (px>=h.x && px<=h.x+h.w && py>=h.y && py<=h.y+h.h) return h; }
+  return {act:{t:'board'}};
+}
+const HOT_HINT = {check:a=>a.done?'Wieder öffnen':'Abhaken', stl:()=>'3D ansehen', pdf:()=>'PDF ansehen', img:()=>'Foto ansehen', link:()=>'Link öffnen',
+  paper:a=>({notes:'Notizen bearbeiten', check:'Zur Checkliste', stl:'Zu den STL-Dateien', docs:'Zu den Dokumenten', links:'Zu den Links'})[a.kind]};
+function scrollPanelTo(sel, focusSel){
+  const found = $('#panelBody').querySelector(sel); if (!found) return;
+  const el = found.closest('.blk, .field') || found;
+  el.scrollIntoView({block:'center', behavior: reduceMotion ? 'auto' : 'smooth'});
+  el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+  if (focusSel){ const f = $('#panelBody').querySelector(focusSel); if (f) setTimeout(()=>f.focus({preventScroll:true}), 350); }
+}
+async function clipAction(act){
+  const u = curP(); if (!u) return;
+  const sd = u.stepData[Math.min(S.selStep, nSteps(u)-1)];
+  switch (act.t){
+    case 'check': {
+      const it = sd.checklist.find(c=>c.id===act.id); if (!it) return;
+      it.done = !it.done; persist(u); renderPanel(); applyCutaway();
+      toast(it.done ? '„'+it.t+'“ abgehakt' : '„'+it.t+'“ wieder offen'); break;
+    }
+    case 'stl': openStl(findRef(u, act.id)); break;
+    case 'pdf': openPdf(findRef(u, act.id)); break;
+    case 'img': { const ref = findRef(u, act.id); const src = ref && await fileUrl(ref); if (src) openModal('<div class="lightbox"><img src="'+esc(src)+'" alt="'+esc(ref.name)+'"></div><div class="actions"><button class="btn" data-m="close">Schließen</button></div>'); break; }
+    case 'link': { const a = document.createElement('a'); a.href = safeUrl(act.url); a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); break; }
+    case 'paper': {
+      const map = {notes:['#f-notes','#f-notes'], check:['[data-form="ck"]','#f-ck'], stl:['#f-stl',null], docs:['#f-pdf',null], links:['[data-form="lk"]','#f-lk']}[act.kind];
+      if (map) scrollPanelTo(map[0], map[1]);
+      break;
+    }
+  }
+}
 canvas.addEventListener('pointerup', e=>{
   if (!down) return; const moved = Math.hypot(e.clientX-down.x, e.clientY-down.y); down=null;
   if (moved > 6) return;
+  const ch = clipHitAt(e.clientX, e.clientY);
+  if (ch){ if (ch.act.t !== 'board') clipAction(ch.act); return; }
   const pk = pickAt(e.clientX, e.clientY);
   if (pk) openProject(pk.pid, pk.step, pk.part);
 });
@@ -1630,7 +1682,15 @@ canvas.addEventListener('pointermove', e=>{
   if (e.pointerType!=='mouse') return;
   if (hoverReq) return;
   hoverReq = requestAnimationFrame(()=>{ hoverReq=null;
-    const pk = down ? null : pickAt(e.clientX, e.clientY); const tt = $('#tooltip');
+    const tt = $('#tooltip');
+    const ch = down ? null : clipHitAt(e.clientX, e.clientY);
+    if (ch){
+      const hint = HOT_HINT[ch.act.t] && HOT_HINT[ch.act.t](ch.act);
+      if (hint){ tt.innerHTML = esc(hint)+(ch.act.label?'<small>'+esc(ch.act.label)+'</small>':''); tt.style.left = e.clientX+'px'; tt.style.top = e.clientY+'px'; tt.hidden=false; canvas.style.cursor='pointer'; }
+      else { tt.hidden=true; canvas.style.cursor=''; }
+      return;
+    }
+    const pk = down ? null : pickAt(e.clientX, e.clientY);
     if (pk && S.projects.has(pk.pid)){
       const p = S.projects.get(pk.pid), u = partOf(p, pk.part) || p;
       tt.innerHTML = esc(p.name)+(u!==p?' · '+esc(u.name):'')+'<small>'+floorTag(pk.step+offOf(p,pk.part))+' · '+esc(stepName(u,pk.step))+'</small>';
