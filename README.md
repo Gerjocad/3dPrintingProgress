@@ -7,7 +7,10 @@ Projektverwaltung als 3D-Stadt (Three.js), gebaut als Claude-Artifact (`projekts
 - Projekttypen: 3D-Druck (Werkstatt), App (Glasturm), Website (Wohnhaus), Video & Content (Studio), Allgemein (Stadthaus).
 - Ein Klick auf ein Stockwerk zoomt auf das Gebäude und öffnet rechts die Details zu diesem Schritt: Notizen, Checkliste, Links, Bilder, PDF-Dokumente (mit eingebautem Viewer) und bei 3D-Druck STL-Dateien mit 3D-Vorschau.
 - Tag und Nacht folgen automatisch der Berliner Uhrzeit (Sonnenstand).
-- Gespeichert wird im privaten Speicher des Artifacts (nur für den Besitzer). Außerhalb von claude.ai läuft die Seite mit localStorage. JSON-Export und -Import sind eingebaut.
+- Volltextsuche über alle Etagen (Notizen, Checklisten, Links, Dateinamen), Zeitleiste pro Projekt, Drag & Drop für Bilder/PDF/STL, STL-Vorschaubilder.
+- MakerWorld-Link pro 3D-Druck-Projekt: Ein grünes Schild vor dem Gebäude öffnet das Modell. Überfällige Deadlines zeigen eine rote Fahne, bald fällige eine orange.
+- Jahreszeiten nach Berliner Datum (Frühlingsblüten, Herbstlaub, Schnee im Winter) und Erfolge im Park bei 3, 10 und 25 fertigen Projekten.
+- Gespeichert wird im privaten Speicher des Artifacts (nur für den Besitzer). Außerhalb von claude.ai läuft die Seite mit localStorage. Ein Komplett-Backup als ZIP (alle Daten und Dateien) lässt sich exportieren und wieder importieren, dazu reiner JSON-Export.
 - Fertige Projekte lassen sich wieder eröffnen, um einen weiteren Schritt einzubauen. Das Gebäude wird dann wieder zur Baustelle.
 - „Update ab diesem Stockwerk“ startet eine neue Version: Alle Stockwerke ab dort werden erneut durchlaufen. Sie stehen so lange unter einer grünen Plane und bekommen nach der Erneuerung ein farbiges Versionsband. Der Stand früherer Versionen bleibt je Stockwerk erhalten.
 - **Anbau für Update:** Ein fertiges Projekt bekommt direkt daneben ein kleineres Update-Gebäude mit eigenen Schritten (bis zu 3 Anbauten: rechts, links, hinten).
