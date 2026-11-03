@@ -13,3 +13,14 @@ Projektverwaltung als 3D-Stadt (Three.js), gebaut als Claude-Artifact (`projekts
 - **Anbau für Update:** Ein fertiges Projekt bekommt direkt daneben ein kleineres Update-Gebäude mit eigenen Schritten (bis zu 3 Anbauten: rechts, links, hinten).
 - **Verzweigung:** Ab dem aktuellen Stockwerk teilt sich das Projekt in zwei Zweige. Über dem letzten fertigen Stockwerk entsteht eine breite Plattform auf Stützen, darauf wachsen zwei Türme mit eigenen Schritten. Zweig A übernimmt den bisherigen Stand, Zweig B startet frisch.
 - Die Grundstücke sind größer, damit Anbauten und Zweige Platz haben. Wird ein Gebäude zu breit, wird es auf dem Grundstück passend verkleinert.
+
+## Eigene Stadt für andere
+
+Jede Person braucht eine eigene Kopie, denn die Daten einer Projektstadt gehören immer ihrem Besitzer.
+
+- **Mit Claude:** `projektstadt.html` in Claude hochladen und sagen „Veröffentliche diese Datei als Artifact“. Daraus entsteht eine eigene, private Stadt mit eigenem Speicher, der auf allen Geräten mit demselben Claude-Konto verfügbar ist.
+- **Ohne Claude:** `projektstadt-teilen.html` herunterladen und im Browser öffnen (oder auf einen Webspace legen). Alles wird nur lokal in diesem Browser gespeichert, also regelmäßig über „⋯ → Als JSON exportieren“ sichern.
+
+Beide Versionen starten mit einer leeren Stadt. Ein Export aus einer anderen Stadt lässt sich über „⋯ → JSON importieren“ übernehmen (Bilder und STL-Dateien sind darin nur als Verweise enthalten).
+
+`projektstadt-teilen.html` wird mit `python3 tools/build-teilen.py` aus `projektstadt.html` erzeugt. Nach Änderungen an der Hauptdatei bitte neu erzeugen.
