@@ -132,6 +132,11 @@ button,input,textarea,select{font:inherit;color:inherit}
 .vers{margin-top:12px}
 .vers .meta{white-space:normal}
 .rows-inline{display:grid;gap:6px}
+.pdfic{flex:none;font:700 10px var(--f-body);letter-spacing:.04em;color:#fff;background:#c4382a;border-radius:4px;padding:2px 5px}
+.modal-card.wide{width:min(900px,100%)}
+.pdfbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.pdfview{overflow:auto;max-height:min(68vh,900px);background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:0;text-align:center}
+.pdfview canvas{display:block;margin:0 auto;background:#fff;max-width:none}
 .stepcard.enter{animation:stepIn .45s ease both}
 @keyframes stepIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 .fl{transition:background-color .3s ease, outline-color .3s ease}
@@ -350,6 +355,7 @@ function normStepData(sd, n){
       links: Array.isArray(s.links) ? s.links.filter(Boolean).map(l=>({id:l.id||uid(), url:String(l.url||''), label:String(l.label||'')})) : [],
       images: Array.isArray(s.images) ? s.images.filter(Boolean) : [],
       files: Array.isArray(s.files) ? s.files.filter(Boolean) : [],
+      docs: Array.isArray(s.docs) ? s.docs.filter(Boolean) : [],
       doneAt: s.doneAt || '',
       ver: Math.max(1, Number(s.ver)|0),
       history: Array.isArray(s.history) ? s.history.filter(Boolean) : []
@@ -424,7 +430,7 @@ function migrate(){
     persist(p);
   }
 }
-const emptyStep = () => ({notes:'', checklist:[], links:[], images:[], files:[], doneAt:'', ver:1, history:[]});
+const emptyStep = () => ({notes:'', checklist:[], links:[], images:[], files:[], docs:[], doneAt:'', ver:1, history:[]});
 const inUpdate = p => !isDone(p) && !isRuin(p) && p.builtTop > p.step+1;
 const isDone = p => p.step >= nSteps(p);
 const isRuin = p => p.state === 'abgebrochen';
@@ -474,7 +480,7 @@ document.addEventListener('visibilitychange', ()=>{ if (document.hidden) flushAl
 
 async function removeProject(p){
   S.projects.delete(p.id);
-  for (const u of [p, ...p.annexes, ...(p.branch ? p.branch.arms : [])]) for (const sd of u.stepData) for (const r of [...sd.images, ...sd.files]) deleteFile(r);
+  for (const u of [p, ...p.annexes, ...(p.branch ? p.branch.arms : [])]) for (const sd of u.stepData) for (const r of [...sd.images, ...sd.files, ...sd.docs]) deleteFile(r);
   if (p.cover) deleteFile(p.cover);
   if (S.mode === 'db'){
     clearTimeout(pending.get(p.id)); pending.delete(p.id); deleted.add(p.id);
@@ -542,6 +548,7 @@ function imgType(f){
 async function uploadFile(file, kind){
   if (kind==='image' && !imgType(file)) throw new Error('Nur PNG, JPG, GIF, WebP oder SVG.');
   if (kind==='stl' && !/\.stl$/i.test(file.name)) throw new Error('Bitte eine .stl-Datei wählen.');
+  if (kind==='pdf' && !(file.type==='application/pdf' || /\.pdf$/i.test(file.name))) throw new Error('Bitte eine PDF-Datei wählen.');
   const base = {name:file.name, size:file.size, kind};
   if (assetsApi){
     try {
@@ -550,10 +557,10 @@ async function uploadFile(file, kind){
         const r = await assetsApi.upload(new Blob([b64],{type:'text/plain'}), {type:'text/plain'});
         return Object.assign(base,{id:r.id, src:'asset', enc:'b64'});
       }
-      const r = await assetsApi.upload(file, {type:imgType(file)});
+      const r = await assetsApi.upload(file, {type: kind==='pdf' ? 'application/pdf' : imgType(file)});
       return Object.assign(base,{id:r.id, src:'asset'});
     } catch(e){
-      if (e && e.code==='too_large') throw new Error(kind==='stl' ? 'Die STL-Datei ist zu groß (max. ca. 15 MB).' : 'Das Bild ist zu groß (max. 20 MB).');
+      if (e && e.code==='too_large') throw new Error(kind==='stl' ? 'Die STL-Datei ist zu groß (max. ca. 15 MB).' : kind==='pdf' ? 'Das PDF ist zu groß (max. 20 MB).' : 'Das Bild ist zu groß (max. 20 MB).');
       if (e && e.code==='quota_or_state') throw new Error('Der Dateispeicher ist voll. Lösche alte Dateien.');
       // other failures: keep the file in this browser instead
     }
@@ -1281,6 +1288,7 @@ function clipboardCanvas(u, i, off){
   if (notes) papers.push({kind:'notes'});
   if (sd.checklist.length) papers.push({kind:'check'});
   if (sd.files.length) papers.push({kind:'stl'});
+  if (sd.docs.length) papers.push({kind:'docs'});
   if (sd.links.length) papers.push({kind:'links'});
   const photos = sd.images.slice(0, papers.length ? 3 : 4);
 
@@ -1302,7 +1310,7 @@ function clipboardCanvas(u, i, off){
   const linesFor = (kind, w, m) => {
     c.font = '400 '+m.fs+'px Figtree, system-ui, sans-serif';
     if (kind==='notes') return wrapLines(c, notes, w-58-24, 400).length;
-    return kind==='check' ? sd.checklist.length : kind==='stl' ? sd.files.length : sd.links.length;
+    return kind==='check' ? sd.checklist.length : kind==='stl' ? sd.files.length : kind==='docs' ? sd.docs.length : sd.links.length;
   };
   const paperH = (kind, w, m, maxLines) => m.head + m.pad + Math.min(linesFor(kind,w,m), maxLines||1e9)*m.LH;
   const layoutH = m => {
@@ -1322,10 +1330,10 @@ function clipboardCanvas(u, i, off){
     const h = m.head + m.pad + lines*m.LH;
     c.save(); c.translate(x+w/2, y+h/2); c.rotate(tilt); c.translate(-w/2, -h/2);
     c.shadowColor = 'rgba(0,0,0,.25)'; c.shadowBlur = 12; c.shadowOffsetY = 4;
-    c.fillStyle = {notes:'#fdfcf7', check:'#ffe58a', stl:'#dcecfb', links:'#eef8ec'}[kind]; c.fillRect(0,0,w,h); c.shadowColor = 'transparent';
+    c.fillStyle = {notes:'#fdfcf7', check:'#ffe58a', stl:'#dcecfb', links:'#eef8ec', docs:'#f6ebe9'}[kind]; c.fillRect(0,0,w,h); c.shadowColor = 'transparent';
     if (kind==='notes'){ c.strokeStyle = '#c9daf0'; c.lineWidth = 2; for (let ly=m.head+m.pad/2+8; ly<h-4; ly+=m.LH){ c.beginPath(); c.moveTo(0,ly); c.lineTo(w,ly); c.stroke(); } c.strokeStyle = '#ef9a9a'; c.beginPath(); c.moveTo(46,0); c.lineTo(46,h); c.stroke(); }
     c.fillStyle = '#26303b'; c.font = '700 '+Math.round(26*Math.max(f,.8))+'px Figtree, system-ui, sans-serif';
-    c.fillText({notes:'Notizen', check:'Checkliste · '+sd.checklist.filter(x=>x.done).length+'/'+sd.checklist.length, stl:'STL-Dateien · '+sd.files.length, links:'Links'}[kind], 58, Math.round(m.head*.68));
+    c.fillText({notes:'Notizen', check:'Checkliste · '+sd.checklist.filter(x=>x.done).length+'/'+sd.checklist.length, stl:'STL-Dateien · '+sd.files.length, docs:'Dokumente · '+sd.docs.length, links:'Links'}[kind], 58, Math.round(m.head*.68));
     c.font = '400 '+m.fs+'px Figtree, system-ui, sans-serif';
     const tx = 58, maxW = w-tx-24; let ty = m.head + m.pad/2 + Math.round(m.LH*.72);
     const more = n => { if (n>0){ c.fillStyle = '#6b7480'; c.font = 'italic '+m.fs+'px Figtree, system-ui, sans-serif'; c.fillText('+ '+n+' weitere', tx, ty); } };
@@ -1342,6 +1350,15 @@ function clipboardCanvas(u, i, off){
         const t = fitText(c, it.t, maxW-box-12); c.fillText(t, tx+box+12, ty);
         if (it.done){ const tw = c.measureText(t).width; c.strokeStyle = '#6f6750'; c.lineWidth = 2; c.beginPath(); c.moveTo(tx+box+12, ty-m.fs*.33); c.lineTo(tx+box+12+tw, ty-m.fs*.33); c.stroke(); }
         ty += m.LH; });
+      more(items.length-n);
+    } else if (kind==='docs'){
+      const items = sd.docs, n = items.length > lines ? lines-1 : items.length;
+      items.slice(0,n).forEach(r=>{
+        c.fillStyle = '#c4382a'; roundRect(c, tx, ty-box, box*1.6, box+2, 4); c.fill();
+        c.fillStyle = '#fff'; c.font = '700 '+Math.round(11*Math.max(f,.8))+'px Figtree, system-ui, sans-serif'; c.fillText('PDF', tx+box*.18, ty-box*.28);
+        c.fillStyle = '#26303b'; const sz = fmtSize(r.size||0); c.font = '500 '+Math.round(22*f)+'px JetBrains Mono, monospace'; const sw = c.measureText(sz).width;
+        c.fillText(sz, tx+maxW-sw, ty); c.font = '400 '+m.fs+'px Figtree, system-ui, sans-serif';
+        c.fillText(fitText(c, r.name, maxW-sw-box*1.6-24), tx+box*1.6+12, ty); ty += m.LH; });
       more(items.length-n);
     } else if (kind==='stl'){
       const items = sd.files, n = items.length > lines ? lines-1 : items.length;
@@ -1501,6 +1518,8 @@ function makeInterior(p, i, fg, dims, off, part, pid){
     } else {
       g.add(box(.6,.4,.05,M.dark,dx+.3,1.13,dz-.2));
     }
+    const nd = Math.min(5, p.stepData[i].docs.length);
+    if (nd){ g.add(box(1.4,.06,.45,M.white,w/2-1.1,.95,-d/2+.45)); for (let k=0;k<nd;k++) g.add(box(.2,.55,.4,[M.fenceTop,M.dark,M.green][k%3],w/2-1.65+k*.26,1.26,-d/2+.45)); }
     const pot = new THREE.Mesh(new THREE.CylinderGeometry(.22,.17,.4,8), M.brick); pot.position.set(w/2-.6,.34,d/2-.6); g.add(pot);
     const leaf = new THREE.Mesh(new THREE.IcosahedronGeometry(.45,0), M.shrub); leaf.position.set(w/2-.6,.85,d/2-.6); g.add(leaf);
   }
@@ -1803,6 +1822,9 @@ function renderPanel(){
     else h += '<p class="empty-note">Lade dein Modell hoch, um es hier direkt in 3D zu drehen und zu prüfen.</p>';
     h += '<div class="actions"><label class="btn small upl">STL hochladen<input type="file" id="f-stl" accept=".stl,model/stl" multiple data-act="stlup"></label>'+(sd.files.length>1?'<button class="btn small" data-act="zipstep">Alle '+sd.files.length+' als ZIP laden</button>':'')+'</div></div>';
   }
+  h += '<div class="blk"><div class="blk-h">Dokumente (PDF)<small>'+sd.docs.length+'</small></div>';
+  if (sd.docs.length) h += '<ul class="list">'+sd.docs.map(r=>'<li class="li"><span class="pdfic" aria-hidden="true">PDF</span><span class="name">'+esc(r.name)+'</span><span class="meta">'+fmtSize(r.size)+'</span><button class="btn small" data-act="pdf" data-id="'+esc(r.id)+'">Ansehen</button><button class="btn small ghost" data-act="pdfdl" data-id="'+esc(r.id)+'" aria-label="Herunterladen">Laden</button><button class="x" data-act="pdfdel" data-id="'+esc(r.id)+'" aria-label="PDF löschen">×</button></li>').join('')+'</ul>';
+  h += '<div class="actions"><label class="btn small upl">PDF hochladen<input type="file" id="f-pdf" accept="application/pdf,.pdf" multiple data-act="pdfup"></label></div></div>';
   if (!ruin && !done && sel===p.step){
     const ready = cl.length && clDone===cl.length;
     h += '<div class="actions">'+(ready?'<span class="ready">Checkliste erledigt – bereit fürs nächste Stockwerk.</span>':'')
@@ -1944,7 +1966,7 @@ function createBranch(p, nameA, nameB){
 function removeBranch(p){
   if (!p || !p.branch) return;
   const [A,B] = p.branch.arms;
-  B.stepData.forEach(sd=>[...sd.images,...sd.files].forEach(deleteFile));
+  B.stepData.forEach(sd=>[...sd.images,...sd.files,...sd.docs].forEach(deleteFile));
   p.step = p.branch.at + A.step;
   p.steps = p.steps.concat(A.steps); p.stepData = p.stepData.concat(A.stepData);
   p.builtTop = A.builtTop ? p.branch.at + A.builtTop : 0;
@@ -2007,7 +2029,7 @@ function insertStep(p, pos, name){
   toast(done ? 'Wieder eröffnet – '+uTag(pos)+' „'+name+'“ ist jetzt Baustelle' : '„'+name+'“ eingefügt');
 }
 function safeUrl(u){ return /^https?:\/\//i.test(u) ? u : 'https://'+u.replace(/^\/+/,''); }
-function findRef(p,id){ if (p.cover && p.cover.id===id) return p.cover; for(const sd of p.stepData){ for(const r of sd.images.concat(sd.files)) if(r.id===id) return r; } return null; }
+function findRef(p,id){ if (p.cover && p.cover.id===id) return p.cover; for(const sd of p.stepData){ for(const r of sd.images.concat(sd.files, sd.docs)) if(r.id===id) return r; } return null; }
 
 let notesT;
 $('#panelBody').addEventListener('input', e=>{
@@ -2020,9 +2042,9 @@ $('#panelBody').addEventListener('change', async e=>{
   const t = e.target, p = curP(); if(!p) return;
   const sd = p.stepData[Math.min(S.selStep,nSteps(p)-1)];
   if (t.dataset.act==='ck'){ const c=sd.checklist.find(c=>c.id===t.dataset.id); if(c){ c.done=t.checked; persist(p); renderPanel(); } }
-  if (t.dataset.act==='imgup' || t.dataset.act==='stlup'){
+  if (t.dataset.act==='imgup' || t.dataset.act==='stlup' || t.dataset.act==='pdfup'){
     const files = Array.from(t.files||[]); t.value='';
-    addFiles(files, t.dataset.act==='imgup' ? 'image' : 'stl');
+    addFiles(files, t.dataset.act==='imgup' ? 'image' : t.dataset.act==='pdfup' ? 'pdf' : 'stl');
   }
 });
 // upload files into the step that is open right now
@@ -2034,7 +2056,7 @@ async function addFiles(files, kind){
     try {
       const ref = await uploadFile(f, kind);
       const sd = u.stepData[idx]; if (!sd) return;
-      (kind==='image'?sd.images:sd.files).push(ref); persist(u);
+      (kind==='image'?sd.images:kind==='pdf'?sd.docs:sd.files).push(ref); persist(u);
       if (curP()===u) renderPanel();
       toast(kind==='image' ? 'Bild zu '+uTag(idx)+' · '+stepName(u,idx)+' hinzugefügt' : f.name+' gespeichert');
     } catch(err){ toast(err.message || 'Upload fehlgeschlagen.'); }
@@ -2085,7 +2107,7 @@ $('#panelBody').addEventListener('click', async e=>{
     case 'ask-rename': $('#confirmBox').innerHTML = '<form class="confirm" data-form="rename" style="margin-top:10px;display:grid;gap:8px;background:var(--surface-2)"><input type="text" id="f-rename" value="'+esc(p.name)+'" aria-label="Neuer Name"><div class="actions"><button class="btn small primary">Speichern</button><button type="button" class="btn small" data-act="nope">Abbrechen</button></div></form>'; $('#f-rename').focus(); break;
     case 'ask-rmannex': $('#confirmBox').innerHTML = '<div class="confirm" style="margin-top:10px"><span>Anbau „'+esc(p.name)+'“ mit allen Notizen und Dateien abreißen?</span><button class="btn small danger" data-act="rmannex">Abreißen</button><button class="btn small" data-act="nope">Abbrechen</button></div>'; break;
     case 'rmannex': { const own = curOwner(); const k = own.annexes.indexOf(p); if (k<0) break;
-      p.stepData.forEach(sd=>[...sd.images,...sd.files].forEach(deleteFile)); own.annexes.splice(k,1);
+      p.stepData.forEach(sd=>[...sd.images,...sd.files,...sd.docs].forEach(deleteFile)); own.annexes.splice(k,1);
       own.updates = own.updates.filter(x=>x.uid!==p.id); persist(own); syncBuildings(); updateStats(); openProject(own.id, null, ''); toast('Anbau abgerissen'); break; }
     case 'ask-unbranch': $('#confirmBox').innerHTML = '<div class="confirm" style="margin-top:10px"><span>Verzweigung aufheben? Zweig A wird wieder Teil des Hauptgebäudes, Zweig B wird mit Notizen und Dateien entfernt.</span><button class="btn small danger" data-act="unbranch">Aufheben</button><button class="btn small" data-act="nope">Abbrechen</button></div>'; break;
     case 'unbranch': removeBranch(curOwner()); break;
@@ -2095,6 +2117,9 @@ $('#panelBody').addEventListener('click', async e=>{
     case 'stldel': { const r=sd.files.find(r=>r.id===el.dataset.id); sd.files=sd.files.filter(r=>r.id!==el.dataset.id); deleteFile(r); persist(p); renderPanel(); break; }
     case 'zoom': { const src = el.getAttribute('src'); if(src) openModal('<div class="lightbox"><img src="'+esc(src)+'" alt="'+esc(el.alt)+'"></div><div class="actions"><button class="btn" data-m="close">Schließen</button></div>'); break; }
     case 'stl': openStl(findRef(p, el.dataset.id)); break;
+    case 'pdf': openPdf(findRef(p, el.dataset.id)); break;
+    case 'pdfdl': { const r=findRef(p,el.dataset.id); try{ const buf=await fileBuffer(r); await saveFile(r.name, new Blob([buf],{type:'application/pdf'})); }catch(err){ if(err&&err.message) toast(err.message); } break; }
+    case 'pdfdel': { const r=sd.docs.find(r=>r.id===el.dataset.id); sd.docs=sd.docs.filter(r=>r.id!==el.dataset.id); deleteFile(r); persist(p); renderPanel(); break; }
     case 'stldl': { const r=findRef(p,el.dataset.id); try{ const buf=await fileBuffer(r); await saveFile(r.name, buf); }catch(err){ if(err&&err.message) toast(err.message); } break; }
     case 'zipstep': { const own = curOwner();
       await downloadZip(cleanName(own.name)+' - '+cleanName(uTag(sel)+' '+stepName(p,sel))+'.zip', sd.files.map(r=>({ref:r, path:r.name}))); break; }
@@ -2148,7 +2173,7 @@ $('#panelBody').addEventListener('click', async e=>{
     case 'rmstep': {
       const i = Math.min(S.selStep,n-1), own = curOwner(); const old = p.stepData[i];
       if (n <= 1) break;
-      [...old.images, ...old.files].forEach(deleteFile);
+      [...old.images, ...old.files, ...old.docs].forEach(deleteFile);
       p.steps.splice(i,1); p.stepData.splice(i,1);
       if (i < p.step) p.step--;
       if (p.builtTop > i) p.builtTop--;
@@ -2216,6 +2241,55 @@ function openModal(html, cleanup){
 }
 function closeModal(){ if (modalCleanup){ modalCleanup(); modalCleanup=null; } $('#modal').hidden = true; $('#modalCard').innerHTML=''; if(lastFocus && lastFocus.focus) lastFocus.focus(); }
 $('#modal').addEventListener('click', e=>{ if (e.target.id==='modal' || (e.target.closest('[data-m="close"]'))) closeModal(); });
+
+/* ---------- PDF viewer (pdf.js, rendered into a canvas) ---------- */
+let pdfjsP = null;
+function loadPdfJs(){
+  if (pdfjsP) return pdfjsP;
+  const add = src => new Promise((res,rej)=>{ const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = rej; document.head.appendChild(sc); });
+  const base = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+  // the worker script runs on the page itself (artifacts cannot start workers from other hosts)
+  pdfjsP = add(base+'pdf.worker.min.js').then(()=>add(base+'pdf.min.js')).then(()=>{ window.pdfjsLib.GlobalWorkerOptions.workerSrc = base+'pdf.worker.min.js'; return window.pdfjsLib; })
+    .catch(e=>{ pdfjsP = null; throw e; });
+  return pdfjsP;
+}
+async function openPdf(ref){
+  if (!ref) return;
+  openModal('<div class="p-top"><h2 style="min-width:0;overflow-wrap:anywhere">'+esc(ref.name)+'</h2></div>'
+    + '<div class="pdfbar"><button class="btn small" id="pdfPrev" aria-label="Vorherige Seite">‹</button><span id="pdfPage" class="stats">Lädt …</span><button class="btn small" id="pdfNext" aria-label="Nächste Seite">›</button>'
+    + '<span style="flex:1"></span><button class="btn small" id="pdfOut" aria-label="Verkleinern">−</button><button class="btn small" id="pdfIn" aria-label="Vergrößern">+</button><button class="btn small ghost" id="pdfDl">Herunterladen</button></div>'
+    + '<div class="pdfview" id="pdfView"><canvas id="pdfCanvas"></canvas></div>'
+    + '<div class="actions" style="justify-content:flex-end"><button class="btn" data-m="close">Schließen</button></div>');
+  const card = $('#modalCard'); card.classList.add('wide');
+  let doc = null, page = 1, zoom = 1, alive = true, task = null;
+  modalCleanup = () => { alive = false; card.classList.remove('wide'); if (task) try{ task.cancel(); }catch(e){} if (doc) doc.destroy(); };
+  let buf;
+  try { [buf] = await Promise.all([fileBuffer(ref), loadPdfJs()]); }
+  catch(err){ if (alive) $('#pdfPage').textContent = err && err.message && !/script/i.test(String(err.type||'')) ? err.message : 'PDF konnte nicht geladen werden.'; return; }
+  if (!alive) return;
+  $('#pdfDl').onclick = () => saveFile(ref.name, new Blob([buf.slice(0)],{type:'application/pdf'}));
+  try { doc = await window.pdfjsLib.getDocument({data:new Uint8Array(buf.slice(0))}).promise; }
+  catch(err){ $('#pdfPage').textContent = 'Die Datei ist kein gültiges PDF.'; return; }
+  const render = async () => {
+    if (!alive) return;
+    const pg = await doc.getPage(page);
+    const view = $('#pdfView'), cv = $('#pdfCanvas'); if (!view || !cv) return;
+    const w0 = pg.getViewport({scale:1}).width;
+    const scale = (view.clientWidth-2)/w0*zoom, dpr = Math.min(window.devicePixelRatio||1, 2);
+    const vp = pg.getViewport({scale:scale*dpr});
+    cv.width = vp.width; cv.height = vp.height; cv.style.width = (vp.width/dpr)+'px'; cv.style.height = (vp.height/dpr)+'px';
+    if (task) try{ task.cancel(); }catch(e){}
+    task = pg.render({canvasContext:cv.getContext('2d'), viewport:vp});
+    try { await task.promise; } catch(e){}
+    $('#pdfPage').textContent = 'Seite '+page+' / '+doc.numPages;
+    $('#pdfPrev').disabled = page<=1; $('#pdfNext').disabled = page>=doc.numPages;
+  };
+  $('#pdfPrev').onclick = () => { if (page>1){ page--; render(); $('#pdfView').scrollTop = 0; } };
+  $('#pdfNext').onclick = () => { if (page<doc.numPages){ page++; render(); $('#pdfView').scrollTop = 0; } };
+  $('#pdfIn').onclick = () => { zoom = Math.min(3, zoom*1.25); render(); };
+  $('#pdfOut').onclick = () => { zoom = Math.max(.5, zoom/1.25); render(); };
+  render();
+}
 
 /* ---------- STL viewer ---------- */
 async function openStl(ref){
