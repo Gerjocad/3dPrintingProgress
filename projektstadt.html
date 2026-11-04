@@ -1367,6 +1367,7 @@ function applyCutaway(){
   const prevKey = cut.clip ? cut.clip.key : (cut.lastKey || null), prevT0 = cut.clip ? cut.clip.t0 : 0;
   const animate = !reduceMotion && newKey !== prevKey;
   cut.lastKey = newKey;
+  if (newKey !== prevKey) S.clipAsk = false;
   if (cut.interior){
     const old = cut.interior; cut.interior = null;
     if (animate){ old.traverse(o=>{ if (o.isMesh) fadeMesh(o, 0, 380); }); setTimeout(()=>{ old.parent && old.parent.remove(old); disposeGroup(old); }, 420); }
@@ -1606,6 +1607,48 @@ function clipboardCanvas(u, i, off){
     });
     slots.forEach(s=>drawPolaroid(c, s, null));
   }
+  // top left: finish this floor (only on the floor that is being built right now)
+  const canFinish = !isRuin(u) && !isDone(u) && i===u.step;
+  if (canFinish){
+    const bx = 40, by = 24, bw = 84, bh = 64;
+    c.fillStyle = 'rgba(255,255,255,.92)'; roundRect(c, bx-8, by-8, bw+16, bh+16, 16); c.fill();
+    c.strokeStyle = 'rgba(80,50,20,.25)'; c.lineWidth = 2; c.stroke();
+    c.fillStyle = TYPES[u.type].color; roundRect(c, bx, by, bw, bh, 10); c.fill();
+    c.strokeStyle = '#fff'; c.lineWidth = 6; c.lineCap = 'round'; c.lineJoin = 'round';
+    const mx = bx+bw/2;
+    for (const dy of [-8, 9]){ c.beginPath(); c.moveTo(mx-15, by+bh/2+dy+7); c.lineTo(mx, by+bh/2+dy-8); c.lineTo(mx+15, by+bh/2+dy+7); c.stroke(); }
+    c.lineCap = 'butt'; c.lineJoin = 'miter';
+    hots.push({x:bx, y:by, w:bw, h:bh, act:{t:'finish'}});
+  }
+  // the question "how to go on?" right on the clipboard
+  if (canFinish && S.clipAsk){
+    c.fillStyle = 'rgba(40,28,14,.55)'; roundRect(c, 0, 0, CW, CH, 36); c.fill();
+    hots.push({x:0, y:0, w:CW, h:CH, act:{t:'fcancel'}});
+    const n = nSteps(u), last = i===n-1;
+    const cw = CW-120, cx0 = 60, ch = 560, cy0 = (CH-ch)/2;
+    c.shadowColor = 'rgba(0,0,0,.35)'; c.shadowBlur = 24; c.shadowOffsetY = 8;
+    c.fillStyle = '#fdfcf7'; roundRect(c, cx0, cy0, cw, ch, 22); c.fill(); c.shadowColor = 'transparent';
+    hots.push({x:cx0, y:cy0, w:cw, h:ch, act:{t:'fnone'}});
+    c.fillStyle = TYPES[u.type].color; roundRect(c, cx0, cy0, cw, 16, 8); c.fill();
+    c.fillStyle = '#26303b'; c.font = '700 40px Figtree, system-ui, sans-serif';
+    c.fillText(fitText(c, floorTag(i+off)+' · '+stepName(u,i)+' ist fertig.', cw-80), cx0+40, cy0+86);
+    c.font = '400 32px Figtree, system-ui, sans-serif'; c.fillStyle = '#5b6878'; c.fillText('Wie geht es weiter?', cx0+40, cy0+134);
+    const btn = (y, label, sub, primary, act) => {
+      const bx = cx0+40, bw = cw-80, bh = sub ? 112 : 84;
+      c.fillStyle = primary ? TYPES[u.type].color : '#eef1f4'; roundRect(c, bx, y, bw, bh, 16); c.fill();
+      c.fillStyle = primary ? '#fff' : '#26303b'; c.font = '700 34px Figtree, system-ui, sans-serif';
+      c.fillText(fitText(c, label, bw-60), bx+30, y+(sub?50:54));
+      if (sub){ c.font = '400 26px Figtree, system-ui, sans-serif'; c.fillStyle = primary ? 'rgba(255,255,255,.9)' : '#5b6878'; c.fillText(fitText(c, sub, bw-60), bx+30, y+88); }
+      hots.push({x:bx, y, w:bw, h:bh, act});
+      return y + bh + 20;
+    };
+    let y = cy0+176;
+    const own = ownerOf(u);
+    const goLbl = last ? (u.version>1 ? 'Version '+u.version+' fertigstellen' : own!==u ? (u.kind==='arm'?'Zweig':'Anbau')+' fertigstellen' : 'Projekt fertigstellen') : 'Weiter wie geplant';
+    y = btn(y, goLbl, last ? 'Das Dach kommt drauf' : '→ '+floorTag(i+1+off)+' '+stepName(u,i+1), true, {t:'fgo'});
+    y = btn(y, 'Neue Etage bauen …', last ? 'Eine weitere Etage oben drauf' : 'Kommt direkt über diese Etage', false, {t:'fnew'});
+    btn(y, 'Abbrechen', '', false, {t:'fcancel'});
+  }
   return {cv, slots, hots};
 }
 function drawPolaroid(c, s, img){
@@ -1636,7 +1679,7 @@ function makeClipboard(u, i, off){
   // photos load in after the board appears
   const token = {};
   g.userData.token = token;
-  slots.forEach(s=>{
+  if (!S.clipAsk) slots.forEach(s=>{
     fileUrl(s.ref).then(url=>{
       if (!url) return;
       const img = new Image();
@@ -1843,7 +1886,7 @@ function clipHitAt(cx, cy){
   for (let k=hs.length-1;k>=0;k--){ const h = hs[k]; if (px>=h.x && px<=h.x+h.w && py>=h.y && py<=h.y+h.h) return h; }
   return {act:{t:'board'}};
 }
-const HOT_HINT = {win:a=>({max:'Maximieren – Details rechts öffnen', restore:'Verkleinern', close:'Schließen'})[a.a], check:a=>a.done?'Wieder öffnen':'Abhaken', stl:()=>'3D ansehen', pdf:()=>'PDF ansehen', img:()=>'Foto ansehen', link:()=>'Link öffnen',
+const HOT_HINT = {finish:()=>'Etage abschließen', fgo:()=>'Etage abschließen und weiter wie geplant', fnew:()=>'Etage abschließen und neue Etage einfügen', fcancel:()=>'Abbrechen', fnone:()=>'', win:a=>({max:'Maximieren – Details rechts öffnen', restore:'Verkleinern', close:'Schließen'})[a.a], check:a=>a.done?'Wieder öffnen':'Abhaken', stl:()=>'3D ansehen', pdf:()=>'PDF ansehen', img:()=>'Foto ansehen', link:()=>'Link öffnen',
   paper:a=>({notes:'Notizen bearbeiten', check:'Zur Checkliste', stl:'Zu den STL-Dateien', docs:'Zu den Dokumenten', links:'Zu den Links'})[a.kind]};
 function scrollPanelTo(sel, focusSel){
   const found = $('#panelBody').querySelector(sel); if (!found) return;
@@ -1857,6 +1900,19 @@ async function clipAction(act){
   const sd = u.stepData[Math.min(S.selStep, nSteps(u)-1)];
   switch (act.t){
     case 'win': if (act.a==='close') closePanel(); else setPanelFull(act.a==='max'); return;
+    case 'finish': S.clipAsk = true; applyCutaway(); return;
+    case 'fcancel': S.clipAsk = false; applyCutaway(); return;
+    case 'fnone': return;
+    case 'fgo': S.clipAsk = false; completeStep(u, ''); return;
+    case 'fnew': {
+      const i = Math.min(S.selStep, nSteps(u)-1);
+      openModal('<h2>Neue Etage bauen</h2><p class="empty-note">'+esc(uTag(i)+' · '+stepName(u,i))+' wird abgeschlossen. Die neue Etage kommt direkt darüber und wird zur Baustelle'+(i<nSteps(u)-1?', „'+esc(stepName(u,i+1))+'“ und alles darüber rutschen eine Etage höher':'')+'.</p>'
+        + '<form id="nfForm" class="blk"><label class="field"><span>Name der neuen Etage</span><input type="text" id="nfName" placeholder="z. B. Zweiter Testdruck" required></label>'
+        + '<div class="actions" style="justify-content:flex-end"><button type="button" class="btn" data-m="close">Abbrechen</button><button class="btn primary">Etage abschließen und neue bauen</button></div></form>');
+      setTimeout(()=>$('#nfName') && $('#nfName').focus(), 40);
+      $('#nfForm').addEventListener('submit', ev=>{ ev.preventDefault(); const nm = $('#nfName').value.trim(); if (!nm) return; closeModal(); S.clipAsk = false; completeStep(u, nm); });
+      return;
+    }
     case 'check': {
       const it = sd.checklist.find(c=>c.id===act.id); if (!it) return;
       it.done = !it.done; persist(u); renderPanel(); applyCutaway();
