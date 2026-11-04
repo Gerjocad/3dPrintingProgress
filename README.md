@@ -4,7 +4,7 @@ Projektverwaltung als 3D-Stadt (Three.js), gebaut als Claude-Artifact (`projekts
 
 - Jedes Projekt steht auf einem eigenen Grundstück. Jeder Schritt ist ein Stockwerk.
 - Laufende Projekte sind Baustellen mit Gerüst, Kran und Bauzaun. Fertige Projekte bekommen ein Dach, abgebrochene bleiben als Ruine stehen.
-- Projekttypen: 3D-Druck (Werkstatt), App (Glasturm), Website (Wohnhaus), Video & Content (Studio), Allgemein (Stadthaus).
+- Projekttypen: 3D-Druck (Werkstatt), App (Glasturm), Website (Wohnhaus), Video & Content (Studio), Allgemein (Stadthaus), Elektronik (Labor), Shop-Produkt (Laden), DIY & Renovierung (Scheune), Lernen & Kurs (Schule).
 - Ein Klick auf ein Stockwerk zoomt auf das Gebäude und öffnet rechts die Details zu diesem Schritt: Notizen, Checkliste, Links, Bilder, PDF-Dokumente (mit eingebautem Viewer) und bei 3D-Druck STL-Dateien mit 3D-Vorschau.
 - Tag und Nacht folgen automatisch der Berliner Uhrzeit (Sonnenstand).
 - Volltextsuche über alle Etagen (Notizen, Checklisten, Links, Dateinamen), Zeitleiste pro Projekt, Drag & Drop für Bilder/PDF/STL, STL-Vorschaubilder.
