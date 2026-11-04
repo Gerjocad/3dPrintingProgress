@@ -132,6 +132,13 @@ button,input,textarea,select{font:inherit;color:inherit}
 .vers{margin-top:12px}
 .vers .meta{white-space:normal}
 .rows-inline{display:grid;gap:6px}
+.winctl{display:flex;gap:2px;margin-left:auto}
+.wbtn{display:grid;place-items:center;width:34px;height:30px;border:0;border-radius:6px;background:transparent;color:var(--fg);cursor:pointer}
+.wbtn svg{width:15px;height:15px}
+.wbtn:hover{background:color-mix(in srgb,var(--fg) 10%,transparent)}
+.wbtn.close:hover{background:#c42b1c;color:#fff}
+.wbtn:disabled{opacity:.35;cursor:default;background:transparent}
+
 .panel.dropping::after{content:attr(data-drop);position:absolute;inset:12px;border:3px dashed var(--accent);border-radius:16px;background:color-mix(in srgb,var(--accent-soft) 88%,transparent);display:grid;place-items:center;text-align:center;padding:20px;font:700 17px var(--f-display);color:var(--accent);pointer-events:none;z-index:5}
 .chip.mw{background:#1f9e58;color:#fff;border-color:transparent;text-decoration:none}
 .chip.mw:hover{filter:brightness(1.08)}
@@ -1456,6 +1463,22 @@ function clipboardCanvas(u, i, off){
   c.fillText(fitText(c, floorTag(i+off)+' · '+stepName(u,i), CW-300), 66, 172);
   const status = isRuin(u) ? 'abgebrochen' : i < u.step ? 'erledigt' : i===u.step ? 'im Bau' : i < u.builtTop ? 'wird erneuert' : 'geplant';
   c.font = '600 28px Figtree, system-ui, sans-serif'; c.textAlign = 'right'; c.fillText(status, CW-66, 168); c.textAlign = 'left';
+  // window buttons, top right: maximize (or restore) and close
+  {
+    const full = !!S.panelFull, bw = 84, bh = 64, y0 = 24, xC = CW-40-bw, xM = xC-bw-8;
+    c.fillStyle = 'rgba(255,255,255,.92)'; roundRect(c, xM-8, y0-8, bw*2+24, bh+16, 16); c.fill();
+    c.strokeStyle = 'rgba(80,50,20,.25)'; c.lineWidth = 2; c.stroke();
+    c.fillStyle = '#eef1f4'; roundRect(c, xM, y0, bw, bh, 10); c.fill();
+    c.fillStyle = '#c42b1c'; roundRect(c, xC, y0, bw, bh, 10); c.fill();
+    c.strokeStyle = '#26303b'; c.lineWidth = 4;
+    const cx = xM+bw/2, cy = y0+bh/2;
+    if (full){ c.strokeRect(cx-13, cy-6, 20, 20); c.beginPath(); c.moveTo(cx-6, cy-6); c.lineTo(cx-6, cy-13); c.lineTo(cx+14, cy-13); c.lineTo(cx+14, cy+7); c.lineTo(cx+7, cy+7); c.stroke(); }
+    else c.strokeRect(cx-14, cy-14, 28, 28);
+    c.strokeStyle = '#fff'; c.lineWidth = 5; c.lineCap = 'round';
+    const xx = xC+bw/2; c.beginPath(); c.moveTo(xx-13, cy-13); c.lineTo(xx+13, cy+13); c.moveTo(xx+13, cy-13); c.lineTo(xx-13, cy+13); c.stroke(); c.lineCap = 'butt';
+    hots.push({x:xM, y:y0, w:bw, h:bh, act:{t:'win', a: full ? 'restore' : 'max'}});
+    hots.push({x:xC, y:y0, w:bw, h:bh, act:{t:'win', a:'close'}});
+  }
   // the big clip on top
   c.fillStyle = '#8d96a1'; roundRect(c, CW/2-150, -10, 300, 96, 18); c.fill();
   c.fillStyle = '#c3cad2'; roundRect(c, CW/2-130, 4, 260, 56, 12); c.fill();
@@ -1829,7 +1852,7 @@ function clipHitAt(cx, cy){
   for (let k=hs.length-1;k>=0;k--){ const h = hs[k]; if (px>=h.x && px<=h.x+h.w && py>=h.y && py<=h.y+h.h) return h; }
   return {act:{t:'board'}};
 }
-const HOT_HINT = {check:a=>a.done?'Wieder öffnen':'Abhaken', stl:()=>'3D ansehen', pdf:()=>'PDF ansehen', img:()=>'Foto ansehen', link:()=>'Link öffnen',
+const HOT_HINT = {win:a=>({max:'Maximieren – Details rechts öffnen', restore:'Verkleinern', close:'Schließen'})[a.a], check:a=>a.done?'Wieder öffnen':'Abhaken', stl:()=>'3D ansehen', pdf:()=>'PDF ansehen', img:()=>'Foto ansehen', link:()=>'Link öffnen',
   paper:a=>({notes:'Notizen bearbeiten', check:'Zur Checkliste', stl:'Zu den STL-Dateien', docs:'Zu den Dokumenten', links:'Zu den Links'})[a.kind]};
 function scrollPanelTo(sel, focusSel){
   const found = $('#panelBody').querySelector(sel); if (!found) return;
@@ -1842,6 +1865,7 @@ async function clipAction(act){
   const u = curP(); if (!u) return;
   const sd = u.stepData[Math.min(S.selStep, nSteps(u)-1)];
   switch (act.t){
+    case 'win': if (act.a==='close') closePanel(); else setPanelFull(act.a==='max'); return;
     case 'check': {
       const it = sd.checklist.find(c=>c.id===act.id); if (!it) return;
       it.done = !it.done; persist(u); renderPanel(); applyCutaway();
@@ -1865,7 +1889,7 @@ canvas.addEventListener('pointerup', e=>{
   if (ch){ if (ch.act.t !== 'board') clipAction(ch.act); return; }
   const pk = pickAt(e.clientX, e.clientY);
   if (pk && pk.mw){ openLink(pk.mw); return; }
-  if (pk) openProject(pk.pid, pk.step, pk.part);
+  if (pk) openProject(pk.pid, pk.step, pk.part, 'mini');
 });
 let hoverReq = null;
 canvas.addEventListener('pointermove', e=>{
@@ -1964,7 +1988,15 @@ function dataChanged(){
 $('#panel').addEventListener('focusout', ()=>{ setTimeout(()=>{ if(panelDirty && !$('#panel').contains(document.activeElement)){ panelDirty=false; renderPanel(); } }, 50); });
 
 /* ---------- panel ---------- */
-function openProject(id, step, part){
+/* a click in the city opens the floor with its clipboard only; the window buttons on the clipboard maximize (side panel) or close */
+function setPanelFull(full){
+  S.panelFull = !!full && !!S.selId;
+  const panel = $('#panel');
+  panel.classList.toggle('open', S.panelFull); document.body.classList.toggle('panel-open', S.panelFull); panel.setAttribute('aria-hidden', String(!S.panelFull));
+  if (S.panelFull){ renderPanel(); $('#panelBody').scrollTop = 0; }
+  if (cut.clip) applyCutaway();   // redraw the window buttons on the clipboard (maximize ↔ restore)
+}
+function openProject(id, step, part, mode){
   const p = S.projects.get(id); if(!p) return;
   part = typeof part==='string' && partOf(p, part) ? part : '';
   const u = partOf(p, part);
@@ -1972,8 +2004,9 @@ function openProject(id, step, part){
   if (!S.selId){ const v = fly ? {pos:fly.tp.clone(), tgt:fly.tt.clone()} : {pos:camera.position.clone(), tgt:controls.target.clone()}; S.returnView = v.pos.distanceTo(v.tgt) > 45 ? v : null; }
   S.selId = id; S.selPart = part; S.selOff = offOf(p, part);
   S.selStep = step==null ? Math.min(u.step, nSteps(u)-1) : Math.min(step, nSteps(u)-1);
-  const panel = $('#panel'); panel.classList.add('open'); document.body.classList.add('panel-open'); panel.setAttribute('aria-hidden','false');
-  renderPanel(); updateSelectionMarker(); flyToProject(id, S.selStep, part);
+  // from the city: small window first; from lists and links: keep the full panel (or open it)
+  const full = mode==='mini' ? !!S.panelFull : true;
+  renderPanel(); setPanelFull(full); updateSelectionMarker(); flyToProject(id, S.selStep, part);
   $('#tooltip').hidden = true;
   $('#drawer').hidden = true;
   $('#panelBody').scrollTop = 0;
@@ -1992,7 +2025,7 @@ function closePanel(){
     }
     S.returnView = null;
   }
-  S.selId = null; S.selPart = ''; S.selOff = 0; const panel=$('#panel'); panel.classList.remove('open'); document.body.classList.remove('panel-open'); panel.setAttribute('aria-hidden','true');
+  S.selId = null; S.selPart = ''; S.selOff = 0; S.panelFull = false; const panel=$('#panel'); panel.classList.remove('open'); document.body.classList.remove('panel-open'); panel.setAttribute('aria-hidden','true');
   updateSelectionMarker();
 }
 const curP = () => partOf(S.projects.get(S.selId), S.selPart) || S.projects.get(S.selId);
@@ -2012,7 +2045,7 @@ function renderPanel(){
   let h;
   if (sub){
     h = '<div class="p-head" style="--tc:'+T.color+'">'
-      + '<div class="p-top"><button class="btn small ghost" data-act="tomain">← '+esc(own.name)+'</button><button class="btn small ghost" data-act="close" aria-label="Details schließen">Schließen</button></div>'
+      + '<div class="p-top"><button class="btn small ghost" data-act="tomain">← '+esc(own.name)+'</button>'+'<div class="winctl"><button class="wbtn" data-act="restore" aria-label="Verkleinern" title="Verkleinern"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="5.5" width="7.5" height="7.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 5.5V3h7.5v7.5h-2.5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></button><button class="wbtn close" data-act="close" aria-label="Schließen" title="Schließen"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></div>'+'</div>'
       + '<div class="eyebrow">'+typeIcon(p.type)+(p.kind==='arm' ? 'Zweig ab '+floorTag(own.branch.at)+' · '+esc(own.name) : 'Anbau · Update-Gebäude von '+esc(own.name))+'</div>'
       + '<h2>'+esc(p.name)+'</h2>'
       + '<div class="chips">'+statusChip(p, S.selOff)+verChip+(p.makerworld?'<a class="chip mw" href="'+esc(safeUrl(p.makerworld))+'" target="_blank" rel="noopener">MakerWorld ↗</a>':'')+'</div>'
@@ -2020,7 +2053,7 @@ function renderPanel(){
       + '</div>';
   } else h = '<div class="p-head" style="--tc:'+T.color+'">'
     + '<div class="p-top"><div class="eyebrow">'+typeIcon(p.type)+esc(T.label)+' · '+esc(T.style)+'</div>'
-    + '<button class="btn small ghost" data-act="close" aria-label="Details schließen">Schließen</button></div>'
+    + '<div class="winctl"><button class="wbtn" data-act="restore" aria-label="Verkleinern" title="Verkleinern"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="5.5" width="7.5" height="7.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 5.5V3h7.5v7.5h-2.5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></button><button class="wbtn close" data-act="close" aria-label="Schließen" title="Schließen"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></div>'+'</div>'
     + '<h2>'+esc(p.name)+'</h2>'
     + '<div class="chips">'+statusChip(p)+verChip+(p.makerworld?'<a class="chip mw" href="'+esc(safeUrl(p.makerworld))+'" target="_blank" rel="noopener">MakerWorld ↗</a>':'')+'<span class="chip">Priorität: '+PRIO[p.priority]+'</span>'
     + (dl?'<span class="chip'+(dl.late?' late':'')+'">'+esc(dl.txt)+'</span>':'')
@@ -2415,6 +2448,7 @@ $('#panelBody').addEventListener('click', async e=>{
   const n = nSteps(p), sel = Math.min(S.selStep,n-1), sd = p.stepData[sel], done = isDone(p);
   switch(act){
     case 'close': closePanel(); break;
+    case 'restore': setPanelFull(false); break;
     case 'step': { S.selStep = +el.dataset.i; S.stepAnim = true; renderPanel(); updateSelectionMarker(); const pt = selPart(buildings.get(S.selId)); if (pt && S.selStep < pt.floors.length) flyToSel(S.selStep); break; }
     case 'tomain': openProject(S.selId, null, ''); break;
     case 'tl': openProject(S.selId, +el.dataset.i, el.dataset.part||''); break;
