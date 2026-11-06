@@ -11,6 +11,7 @@ Projektverwaltung als 3D-Stadt (Three.js), gebaut als Claude-Artifact (`projekts
 - MakerWorld-Link pro 3D-Druck-Projekt: Ein grünes Schild vor dem Gebäude öffnet das Modell. Überfällige Deadlines zeigen eine rote Fahne, bald fällige eine orange.
 - Jahreszeiten nach Berliner Datum (Frühlingsblüten, Herbstlaub, Schnee im Winter) und Erfolge im Park bei 3, 10 und 25 fertigen Projekten.
 - Gespeichert wird im privaten Speicher des Artifacts (nur für den Besitzer). Außerhalb von claude.ai läuft die Seite mit localStorage. Ein Komplett-Backup als ZIP (alle Daten und Dateien) lässt sich exportieren und wieder importieren, dazu reiner JSON-Export.
+- Projekte lassen sich vorzeitig abschließen: Die restlichen Etagen werden weggelassen (Notizen bleiben gespeichert und lassen sich wieder aufnehmen), das Gebäude bekommt direkt sein Dach.
 - Fertige Projekte lassen sich wieder eröffnen, um einen weiteren Schritt einzubauen. Das Gebäude wird dann wieder zur Baustelle.
 - „Update ab diesem Stockwerk“ startet eine neue Version: Alle Stockwerke ab dort werden erneut durchlaufen. Sie stehen so lange unter einer grünen Plane und bekommen nach der Erneuerung ein farbiges Versionsband. Der Stand früherer Versionen bleibt je Stockwerk erhalten.
 - **Anbau für Update:** Ein fertiges Projekt bekommt direkt daneben ein kleineres Update-Gebäude mit eigenen Schritten (bis zu 3 Anbauten: rechts, links, hinten).

@@ -124,6 +124,8 @@ button,input,textarea,select{font:inherit;color:inherit}
 .vers{margin-top:12px}
 .vers .meta{white-space:normal}
 .rows-inline{display:grid;gap:6px}
+.skipped{margin-top:10px;font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;border:1px dashed var(--line);border-radius:10px;padding:8px 10px}
+.skipped b{color:var(--fg)}
 .clip-ed{position:fixed;z-index:36;background:#fdfcf7;color:#26303b;border-radius:8px;box-shadow:0 14px 40px rgba(40,25,10,.35),0 0 0 1px rgba(80,50,20,.18);padding:14px 16px 16px;overflow:auto;display:grid;gap:12px;align-content:start;font:15px/1.45 var(--f-body);color-scheme:light}
 .ce-head{display:flex;align-items:baseline;gap:8px}
 .ce-head b{font:700 17px var(--f-display)}
@@ -437,7 +439,8 @@ function normalizeUnit(u, t){
     steps, stepData: normStepData(u.stepData, n), step: Math.max(0, Math.min(n, Number(u.step)|0)), state:'aktiv',
     version: Math.max(1, Number(u.version)|0), builtTop: Math.max(0, Math.min(n, Number(u.builtTop)|0)),
     updates: Array.isArray(u.updates) ? u.updates.filter(Boolean) : [], doneAt: u.doneAt || '', createdAt: u.createdAt || Date.now(), makerworld: String(u.makerworld||''),
-    tags:[], priority:'mittel', deadline:'', cover:null };
+    tags:[], priority:'mittel', deadline:'', cover:null,
+    skipped: Array.isArray(u.skipped) ? u.skipped.filter(Boolean).map(k=>({name:String(k.name||'Schritt'), data:normStepData([k.data],1)[0]})) : [], earlyAt: u.earlyAt || '' };
 }
 function normalize(p, id){
   p = p || {};
@@ -460,6 +463,7 @@ function normalize(p, id){
     updates: Array.isArray(p.updates) ? p.updates.filter(Boolean) : [],
     mig: p.mig && typeof p.mig==='object' ? p.mig : {},
     makerworld: String(p.makerworld||''),
+    skipped: Array.isArray(p.skipped) ? p.skipped.filter(Boolean).map(k=>({name:String(k.name||'Schritt'), data:normStepData([k.data],1)[0]})) : [], earlyAt: p.earlyAt || '',
     annexes: Array.isArray(p.annexes) ? p.annexes.filter(Boolean).map(a=>normalizeUnit(Object.assign({},a,{kind:'annex'}), t)) : [],
     branch: br ? {at: Math.max(1, Math.min(n, Number(br.at)|0)), createdAt: br.createdAt || '', arms: br.arms.map(a=>normalizeUnit(Object.assign({},a,{kind:'arm'}), t))} : null
   };
@@ -546,7 +550,7 @@ document.addEventListener('visibilitychange', ()=>{ if (document.hidden) flushAl
 
 async function removeProject(p){
   S.projects.delete(p.id);
-  for (const u of [p, ...p.annexes, ...(p.branch ? p.branch.arms : [])]) for (const sd of u.stepData) for (const r of [...sd.images, ...sd.files, ...sd.docs]) deleteFile(r);
+  for (const u of [p, ...p.annexes, ...(p.branch ? p.branch.arms : [])]) for (const sd of u.stepData.concat((u.skipped||[]).map(k=>k.data))) for (const r of [...sd.images, ...sd.files, ...sd.docs]) deleteFile(r);
   if (p.cover) deleteFile(p.cover);
   if (S.mode === 'db'){
     clearTimeout(pending.get(p.id)); pending.delete(p.id); deleted.add(p.id);
@@ -1659,7 +1663,7 @@ function clipboardCanvas(u, i, off){
     c.fillStyle = 'rgba(40,28,14,.55)'; roundRect(c, 0, 0, CW, CH, 36); c.fill();
     hots.push({x:0, y:0, w:CW, h:CH, act:{t:'fcancel'}});
     const n = nSteps(u), last = i===n-1;
-    const cw = CW-120, cx0 = 60, ch = 560, cy0 = (CH-ch)/2;
+    const cw = CW-120, cx0 = 60, ch = last ? 560 : 692, cy0 = (CH-ch)/2;
     c.shadowColor = 'rgba(0,0,0,.35)'; c.shadowBlur = 24; c.shadowOffsetY = 8;
     c.fillStyle = '#fdfcf7'; roundRect(c, cx0, cy0, cw, ch, 22); c.fill(); c.shadowColor = 'transparent';
     hots.push({x:cx0, y:cy0, w:cw, h:ch, act:{t:'fnone'}});
@@ -1681,6 +1685,7 @@ function clipboardCanvas(u, i, off){
     const goLbl = last ? (u.version>1 ? 'Version '+u.version+' fertigstellen' : own!==u ? (u.kind==='arm'?'Zweig':'Anbau')+' fertigstellen' : 'Projekt fertigstellen') : 'Weiter wie geplant';
     y = btn(y, goLbl, last ? 'Das Dach kommt drauf' : '→ '+floorTag(i+1+off)+' '+stepName(u,i+1), true, {t:'fgo'});
     y = btn(y, 'Neue Etage bauen …', last ? 'Eine weitere Etage oben drauf' : 'Kommt direkt über diese Etage', false, {t:'fnew'});
+    if (!last) y = btn(y, 'Vorzeitig abschließen', 'Restliche Etagen weglassen, Dach drauf', false, {t:'fearly'});
     btn(y, 'Abbrechen', '', false, {t:'fcancel'});
   }
   return {cv, slots, hots};
@@ -2015,7 +2020,7 @@ function clipHitAt(cx, cy){
   for (let k=hs.length-1;k>=0;k--){ const h = hs[k]; if (px>=h.x && px<=h.x+h.w && py>=h.y && py<=h.y+h.h) return h; }
   return {act:{t:'board'}};
 }
-const HOT_HINT = {finish:()=>'Etage abschließen', fgo:()=>'Etage abschließen und weiter wie geplant', fnew:()=>'Etage abschließen und neue Etage einfügen', fcancel:()=>'Abbrechen', fnone:()=>'', win:a=>({max:'Maximieren – Details rechts öffnen', restore:'Verkleinern', close:'Schließen'})[a.a], check:a=>a.done?'Wieder öffnen':'Abhaken', stl:()=>'3D ansehen', pdf:()=>'PDF ansehen', img:()=>'Foto ansehen', link:()=>'Link öffnen',
+const HOT_HINT = {fearly:()=>'Projekt hier vorzeitig abschließen', finish:()=>'Etage abschließen', fgo:()=>'Etage abschließen und weiter wie geplant', fnew:()=>'Etage abschließen und neue Etage einfügen', fcancel:()=>'Abbrechen', fnone:()=>'', win:a=>({max:'Maximieren – Details rechts öffnen', restore:'Verkleinern', close:'Schließen'})[a.a], check:a=>a.done?'Wieder öffnen':'Abhaken', stl:()=>'3D ansehen', pdf:()=>'PDF ansehen', img:()=>'Foto ansehen', link:()=>'Link öffnen',
   plus:()=>'Hinzufügen', paper:a=>({notes:'Notiz bearbeiten', check:'Checkliste bearbeiten', stl:'Dateien hinzufügen', docs:'Dateien hinzufügen', links:'Links bearbeiten'})[a.kind]};
 function scrollPanelTo(sel, focusSel){
   const found = $('#panelBody').querySelector(sel); if (!found) return;
@@ -2033,6 +2038,7 @@ async function clipAction(act){
     case 'fcancel': S.clipAsk = false; applyCutaway(); return;
     case 'fnone': return;
     case 'fgo': S.clipAsk = false; completeStep(u, ''); return;
+    case 'fearly': S.clipAsk = false; finishEarly(u, true); return;
     case 'fnew': {
       const i = Math.min(S.selStep, nSteps(u)-1);
       openModal('<h2>Neue Etage bauen</h2><p class="empty-note">'+esc(uTag(i)+' · '+stepName(u,i))+' wird abgeschlossen. Die neue Etage kommt direkt darüber und wird zur Baustelle'+(i<nSteps(u)-1?', „'+esc(stepName(u,i+1))+'“ und alles darüber rutschen eine Etage höher':'')+'.</p>'
@@ -2125,7 +2131,7 @@ function statusChip(p, off){
   if (p.branch && !isRuin(p)){ const a=p.branch.arms; return projectDone(p) ? '<span class="chip done">Fertig · 2 Zweige</span>' : '<span class="chip build">Verzweigt · '+a.filter(isDone).length+'/2 Zweige fertig</span>'; }
   if (!isRuin(p) && isDone(p) && p.annexes && p.annexes.some(a=>!isDone(a))) return '<span class="chip build">Anbau im Bau</span>';
   if (isRuin(p)) return '<span class="chip ruin">Ruine · bei '+esc(stepName(p,Math.min(p.step,n-1)))+' abgebrochen</span>';
-  if (isDone(p)) return '<span class="chip done">Fertig'+(p.doneAt?' seit '+fmtDate(p.doneAt):'')+'</span>';
+  if (isDone(p)) return '<span class="chip done">'+(p.earlyAt?'Vorzeitig fertig':'Fertig')+(p.doneAt?' seit '+fmtDate(p.doneAt):'')+'</span>';
   if (inUpdate(p)) return '<span class="chip build">Umbau v'+p.version+' · '+floorTag(p.step+off)+' von '+(n+off)+'</span>';
   return '<span class="chip build">Baustelle · '+floorTag(p.step+off)+' von '+(n+off)+'</span>';
 }
@@ -2248,7 +2254,9 @@ function renderPanel(){
     else { cls='planned'; st='geplant'; }
     h += '<button class="fl '+cls+(i===sel?' sel':'')+'" data-act="step" data-i="'+i+'"><span class="tagf">'+uTag(i)+'</span><span>'+esc(stepName(p,i))+'</span><span class="st">'+st+'</span></button>';
   }
-  h += '<div class="ground"></div></div></section>';
+  h += '<div class="ground"></div></div>';
+  if (done && p.skipped && p.skipped.length) h += '<div class="skipped"><b>Vorzeitig abgeschlossen'+(p.earlyAt?' am '+fmtDate(p.earlyAt):'')+'.</b> Nicht gebaut: '+p.skipped.map(k=>'„'+esc(k.name)+'“').join(', ')+'. <button class="btn small" data-act="unskip">Wieder aufnehmen</button></div>';
+  h += '</section>';
   if (!sub && (p.branch || p.annexes.length)){
     const row = (part,u,label) => { const n2=nSteps(u), off=offOf(p,part);
       const st = isDone(u) ? 'fertig' : floorTag(u.step+off)+' · '+esc(stepName(u,u.step));
@@ -2315,6 +2323,7 @@ function renderPanel(){
     + (allStl(curOwner()).length ? '<button class="btn small" data-act="zipall">Alle STL des Projekts als ZIP ('+allStl(curOwner()).length+')</button>' : '')
     + (done ? '<button class="btn small primary" data-act="ask-addstep">Wieder eröffnen · Schritt hinzufügen</button>' : '<button class="btn small" data-act="ask-addstep">Schritt hinzufügen</button>')
     + (p.step>0 ? '<button class="btn small" data-act="back">Einen Schritt zurück</button>' : '')
+    + (!done ? '<button class="btn small" data-act="ask-early">Vorzeitig abschließen</button>' : '')
     + (p.kind==='annex' ? '<button class="btn small danger" data-act="ask-rmannex">Anbau abreißen</button>' : '<button class="btn small danger" data-act="ask-unbranch">Verzweigung aufheben</button>')
     + '</div><div id="confirmBox"></div>';
   else h += '<section><div class="sec-h"><h3>Projekt</h3></div><div class="actions" id="projActions">'
@@ -2322,6 +2331,7 @@ function renderPanel(){
     + (canAnnex ? '<button class="btn small primary" data-act="ask-annex">Anbau für Update</button>' : '')
     + (allStl(p).length ? '<button class="btn small" data-act="zipall">Alle STL als ZIP ('+allStl(p).length+')</button>' : '')
     + (hasBranch ? '' : done ? '<button class="btn small'+(canAnnex?'':' primary')+'" data-act="ask-addstep">Wieder eröffnen · Schritt hinzufügen</button>' : (!ruin ? '<button class="btn small" data-act="ask-addstep">Schritt hinzufügen</button>' : ''))
+    + (!ruin && !hasBranch && !done ? '<button class="btn small" data-act="ask-early">Vorzeitig abschließen</button>' : '')
     + (!ruin && !hasBranch && p.step>0 ? '<button class="btn small" data-act="back">Einen Schritt zurück</button>' : '')
     + (ruin ? '<button class="btn small" data-act="resume">Wieder aufnehmen</button>' : (!projectDone(p) ? '<button class="btn small danger" data-act="ask-abandon">Projekt abbrechen</button>' : ''))
     + '<button class="btn small danger" data-act="ask-delete">Löschen</button></div>'
@@ -2396,6 +2406,37 @@ async function downloadZip(filename, entries){
 }
 
 /* ---------- finishing a floor ---------- */
+/* ---------- finishing a project early: the remaining floors are left out, the roof goes on ---------- */
+function finishEarly(u, countCurrent){
+  const now = new Date().toISOString(), own = ownerOf(u);
+  if (isDone(u) || isRuin(u)) return;
+  let from = u.step;
+  if ((countCurrent || u.step === 0) && u.step < nSteps(u)){ u.stepData[u.step].doneAt = now; u.stepData[u.step].ver = u.version; from = u.step+1; }
+  const rest = u.steps.slice(from).map((name,k)=>({name, data:u.stepData[from+k]}));
+  u.skipped = (u.skipped||[]).concat(rest);
+  u.steps = u.steps.slice(0, from); u.stepData = u.stepData.slice(0, from);
+  u.step = u.steps.length; u.builtTop = 0; u.doneAt = now; u.earlyAt = now;
+  u.updates.forEach(x=>{ if (!x.doneAt && !x.uid && x.kind!=='branch') x.doneAt = now; });
+  if (own !== u){
+    own.updates.forEach(x=>{ if (x.uid===u.id && !x.doneAt) x.doneAt = now; });
+    if (own.branch && projectDone(own)) own.updates.forEach(x=>{ if (x.kind==='branch' && !x.doneAt) x.doneAt = now; });
+    if (projectDone(own) && !own.doneAt) own.doneAt = now;
+  }
+  S.selStep = Math.min(S.selStep, nSteps(u)-1);
+  persist(u); syncBuildings(); renderPanel(); updateStats(); flyToSel(S.selStep);
+  toast('Vorzeitig abgeschlossen – '+rest.length+(rest.length===1?' Etage':' Etagen')+' weggelassen, das Dach ist drauf');
+}
+function restoreSkipped(u){
+  if (!u.skipped || !u.skipped.length) return;
+  const first = u.steps.length;
+  u.skipped.forEach(k=>{ u.steps.push(k.name); u.stepData.push(k.data); });
+  u.skipped = []; u.earlyAt = ''; u.doneAt = '';
+  u.step = first;
+  const own = ownerOf(u); if (own !== u) own.doneAt = '';
+  S.selStep = first;
+  persist(u); syncBuildings(); renderPanel(); updateStats(); flyToSel(first);
+  toast('Übersprungene Etagen wieder im Bauplan – '+uTag(first)+' ist jetzt Baustelle');
+}
 function completeStep(p, newName){
   const now = new Date().toISOString();
   p.stepData[p.step].doneAt = now;
@@ -2475,7 +2516,7 @@ function timelineHtml(p, only){
   }
   if (!only){
     p.updates.forEach(x=>{ if (x.kind==='update' || x.kind==='branch') ev.push({at:t(x.at), kind:'upd', label:(x.kind==='branch'?'Verzweigung ':'Update v'+x.ver+' gestartet')+(x.name?' · '+x.name:'')}); });
-    if (p.doneAt && isDone(p) && !p.branch) ev.push({at:t(p.doneAt), kind:'done', label:'Fertiggestellt'+(p.version>1?' (v'+p.version+')':'')});
+    if (p.doneAt && isDone(p) && !p.branch) ev.push({at:t(p.doneAt), kind:'done', label:(p.earlyAt?'Vorzeitig abgeschlossen ('+p.skipped.length+' Etagen weggelassen)':'Fertiggestellt')+(p.version>1?' (v'+p.version+')':'')});
   }
   const list = ev.filter(e=>!isNaN(e.at)).sort((a,b)=>a.at-b.at);
   if (list.length < 2) return '';
@@ -2674,6 +2715,16 @@ $('#panelBody').addEventListener('click', async e=>{
       { const own = curOwner(); if (own !== p){ own.doneAt=''; own.updates.forEach(x=>{ if (x.uid===p.id || x.kind==='branch') x.doneAt=''; }); } }
       S.selStep = p.step; persist(p); syncBuildings(); renderPanel(); updateStats(); flyToSel(S.selStep); break;
     }
+    case 'ask-early': {
+      const rest = p.steps.slice(p.step+1);
+      $('#confirmBox').innerHTML = '<div class="confirm" style="margin-top:10px;display:grid;gap:8px;background:var(--accent-soft)">'
+        + '<span><b>Vorzeitig abschließen:</b> '+(rest.length ? 'Die geplanten Etagen '+rest.map(n=>'„'+esc(n)+'“').join(', ')+' werden nicht gebaut.' : 'Es folgen keine weiteren Etagen.')+' Das Gebäude bekommt direkt sein Dach. Notizen der weggelassenen Etagen bleiben gespeichert, du kannst sie später wieder aufnehmen.</span>'
+        + (p.step>0 ? '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="f-earlycur" checked> Aktuelle Etage „'+esc(stepName(p,p.step))+'“ als erledigt zählen</label>' : '')
+        + '<div class="actions"><button class="btn small primary" data-act="early">Jetzt abschließen</button><button class="btn small" data-act="nope">Abbrechen</button></div></div>';
+      break;
+    }
+    case 'early': finishEarly(p, !$('#f-earlycur') || $('#f-earlycur').checked); break;
+    case 'unskip': restoreSkipped(p); break;
     case 'resume': p.state='aktiv'; persist(p); syncBuildings(); renderPanel(); updateStats(); toast('Die Baustelle läuft wieder.'); break;
     case 'ask-abandon': $('#confirmBox').innerHTML = '<div class="confirm" style="margin-top:10px"><span>Projekt abbrechen? Es bleibt als Ruine in der Stadt stehen.</span><button class="btn small danger" data-act="abandon">Ja, abbrechen</button><button class="btn small" data-act="nope">Nein</button></div>'; break;
     case 'ask-delete': $('#confirmBox').innerHTML = '<div class="confirm" style="margin-top:10px"><span>Projekt mit allen Notizen und Dateien endgültig löschen?</span><button class="btn small danger" data-act="delete">Endgültig löschen</button><button class="btn small" data-act="nope">Abbrechen</button></div>'; break;
@@ -2968,7 +3019,7 @@ const refKind = (list, ref) => ref.kind || (list==='images'||list==='cover' ? 'i
 function forEachRef(p, fn){
   if (p.cover) fn(p.cover, 'cover');
   for (const u of [p, ...(p.annexes||[]), ...(p.branch ? p.branch.arms : [])])
-    for (const sd of u.stepData) for (const list of ['images','files','docs']) (sd[list]||[]).forEach(r=>fn(r, list));
+    for (const sd of u.stepData.concat((u.skipped||[]).map(k=>k.data))) for (const list of ['images','files','docs']) (sd[list]||[]).forEach(r=>fn(r, list));
 }
 function importProjects(arr){
   arr.forEach(raw=>{ const p=normalize(raw, raw.id); const clash = Array.from(S.projects.values()).some(o=>o.id!==p.id && o.lot===p.lot); if(clash) p.lot=-1; S.projects.set(p.id,p); persist(p); });
