@@ -124,6 +124,30 @@ button,input,textarea,select{font:inherit;color:inherit}
 .vers{margin-top:12px}
 .vers .meta{white-space:normal}
 .rows-inline{display:grid;gap:6px}
+.clip-ed{position:fixed;z-index:36;background:#fdfcf7;color:#26303b;border-radius:8px;box-shadow:0 14px 40px rgba(40,25,10,.35),0 0 0 1px rgba(80,50,20,.18);padding:14px 16px 16px;overflow:auto;display:grid;gap:12px;align-content:start;font:15px/1.45 var(--f-body);color-scheme:light}
+.ce-head{display:flex;align-items:baseline;gap:8px}
+.ce-head b{font:700 17px var(--f-display)}
+.ce-head span{font:600 12px var(--f-mono);color:#6b7480;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ce-x{margin-left:auto;border:0;background:transparent;font-size:22px;line-height:1;cursor:pointer;color:#6b7480;border-radius:6px;padding:0 8px}
+.ce-x:hover{background:#c42b1c;color:#fff}
+.ce-list .ce-x{margin-left:0}
+.ce-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ce-tile{display:flex;align-items:center;gap:10px;text-align:left;border:1px solid #e1dccd;background:#fff;border-radius:10px;padding:10px;font:600 14px var(--f-body);color:#26303b;cursor:pointer}
+.ce-tile:hover{border-color:#e36b16;background:#fff7f0}
+.ce-ic{display:grid;place-items:center;flex:none;width:30px;height:30px;border-radius:8px;background:#f1ece0;font:700 12px var(--f-body)}
+.ce-ta{width:100%;min-height:180px;border:1px solid #e1dccd;border-radius:8px;padding:10px 12px;font:15px/1.6 var(--f-body);color:#26303b;resize:vertical;background:repeating-linear-gradient(#fff 0 23px,#e4ecf7 23px 24px);background-attachment:local}
+.ce-in{width:100%;border:1px solid #e1dccd;border-radius:8px;padding:7px 10px;font:14px var(--f-body);color:#26303b;background:#fff;min-width:0}
+.ce-list{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.ce-list li{display:flex;align-items:center;gap:8px}
+.ce-list input[type=checkbox]{width:18px;height:18px;flex:none;accent-color:#2c8452}
+.ce-lk{flex:1;min-width:0;overflow-wrap:anywhere;color:#2a63b8}
+.ce-add{display:flex;gap:6px}
+.ce-add.col{flex-direction:column}
+.ce-btn{border:1px solid #e1dccd;background:#fff;border-radius:8px;padding:7px 12px;font:600 13.5px var(--f-body);color:#26303b;cursor:pointer;white-space:nowrap}
+.ce-btn.primary{background:#e36b16;border-color:#e36b16;color:#fff}
+.ce-act{display:flex;align-items:center;gap:8px;justify-content:space-between}
+.ce-note{margin:0;font-size:12px;color:#6b7480}
+.clip-ed :focus-visible{outline:2px solid #e36b16;outline-offset:1px}
 .winctl{display:flex;gap:2px;margin-left:auto}
 .wbtn{display:grid;place-items:center;width:34px;height:30px;border:0;border-radius:6px;background:transparent;color:var(--fg);cursor:pointer}
 .wbtn svg{width:15px;height:15px}
@@ -288,6 +312,7 @@ pre.json{max-height:40vh;overflow:auto;background:var(--surface-2);border-radius
   <div class="hint">Jedes Stockwerk ist ein Projektschritt. Tippe auf ein Stockwerk, um ihn zu öffnen.</div>
 </aside>
 
+<div id="clipEd" class="clip-ed" hidden role="dialog" aria-label="Auf dem Klemmbrett bearbeiten"></div>
 <div id="tooltip" hidden></div>
 <div id="loading" class="center-card float"><h2>Stadt wird geladen …</h2><p id="loadingMsg">Deine Projekte werden abgerufen.</p></div>
 <div id="empty" class="center-card float" hidden>
@@ -1367,7 +1392,7 @@ function applyCutaway(){
   const prevKey = cut.clip ? cut.clip.key : (cut.lastKey || null), prevT0 = cut.clip ? cut.clip.t0 : 0;
   const animate = !reduceMotion && newKey !== prevKey;
   cut.lastKey = newKey;
-  if (newKey !== prevKey) S.clipAsk = false;
+  if (newKey !== prevKey){ S.clipAsk = false; if (!$('#clipEd').hidden) closeClipEd(); }
   if (cut.interior){
     const old = cut.interior; cut.interior = null;
     if (animate){ old.traverse(o=>{ if (o.isMesh) fadeMesh(o, 0, 380); }); setTimeout(()=>{ old.parent && old.parent.remove(old); disposeGroup(old); }, 420); }
@@ -1620,6 +1645,15 @@ function clipboardCanvas(u, i, off){
     c.lineCap = 'butt'; c.lineJoin = 'miter';
     hots.push({x:bx, y:by, w:bw, h:bh, act:{t:'finish'}});
   }
+  if (!isRuin(u)){
+    const bx = canFinish ? 40+84+24 : 40, by = 24, bw = 84, bh = 64;
+    c.fillStyle = 'rgba(255,255,255,.92)'; roundRect(c, bx-8, by-8, bw+16, bh+16, 16); c.fill();
+    c.strokeStyle = 'rgba(80,50,20,.25)'; c.lineWidth = 2; c.stroke();
+    c.fillStyle = '#eef1f4'; roundRect(c, bx, by, bw, bh, 10); c.fill();
+    c.strokeStyle = '#26303b'; c.lineWidth = 6; c.lineCap = 'round';
+    c.beginPath(); c.moveTo(bx+bw/2, by+bh/2-16); c.lineTo(bx+bw/2, by+bh/2+16); c.moveTo(bx+bw/2-16, by+bh/2); c.lineTo(bx+bw/2+16, by+bh/2); c.stroke(); c.lineCap = 'butt';
+    hots.push({x:bx, y:by, w:bw, h:bh, act:{t:'plus'}});
+  }
   // the question "how to go on?" right on the clipboard
   if (canFinish && S.clipAsk){
     c.fillStyle = 'rgba(40,28,14,.55)'; roundRect(c, 0, 0, CW, CH, 36); c.fill();
@@ -1697,6 +1731,7 @@ function removeClipboard(){
 }
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 function updateClipboard(now){
+  if (!$('#clipEd').hidden) placeClipEd();
   cut.dying = cut.dying.filter(d=>{
     const k = Math.min(1, (now-d.t0)/380);
     d.g.traverse(o=>{ if (o.material) o.material.opacity = 1-k; });
@@ -1872,6 +1907,100 @@ function pickAt(cx, cy){
 let down = null;
 canvas.addEventListener('pointerdown', e=>{ down = {x:e.clientX, y:e.clientY}; if (fly){ fly=null; controls.enabled=true; } closeMenu(); });
 function openLink(url){ const a = document.createElement('a'); a.href = safeUrl(url); a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); }
+/* ---------- editing right on the clipboard ---------- */
+const edState = {mode:null};
+const edUnit = () => { const u = curP(); return u ? {u, sd:u.stepData[Math.min(S.selStep, nSteps(u)-1)], i:Math.min(S.selStep, nSteps(u)-1)} : null; };
+function clipRect(){
+  const cl = cut.clip; if (!cl || !cl.g.userData.face) return null;
+  const f = cl.g.userData.face, g = f.geometry.parameters; const W = g.width, H = g.height;
+  cl.g.updateMatrixWorld(true);
+  const r = canvas.getBoundingClientRect(); let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+  for (const [x,y] of [[-W/2,-H/2],[W/2,-H/2],[W/2,H/2],[-W/2,H/2]]){
+    const v = new THREE.Vector3(x,y,0); f.localToWorld(v); v.project(camera);
+    const sx = r.left + (v.x+1)/2*r.width, sy = r.top + (1-v.y)/2*r.height;
+    x0=Math.min(x0,sx); x1=Math.max(x1,sx); y0=Math.min(y0,sy); y1=Math.max(y1,sy);
+  }
+  return {x:x0, y:y0, w:x1-x0, h:y1-y0};
+}
+function placeClipEd(){
+  const el = $('#clipEd'), r = clipRect();
+  if (!r){ closeClipEd(); return; }
+  const w = Math.max(280, Math.min(r.w*.9, 520));
+  let left = r.x + (r.w-w)/2, top = r.y + r.h*.17;
+  left = Math.max(8, Math.min(left, innerWidth - w - 8));
+  top = Math.max(8, Math.min(top, innerHeight - 120));
+  el.style.width = w+'px'; el.style.left = left+'px'; el.style.top = top+'px';
+  el.style.maxHeight = Math.max(200, Math.min(r.h*.78, innerHeight - top - 12))+'px';
+}
+function closeClipEd(){ const el = $('#clipEd'); el.hidden = true; el.innerHTML = ''; edState.mode = null; }
+function edSaved(){ const e = edUnit(); if (!e) return; persist(e.u); if (S.panelFull) renderPanel(); }
+function pickFiles(kind){
+  const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true;
+  inp.accept = kind==='image' ? 'image/*' : kind==='pdf' ? 'application/pdf,.pdf' : '.stl,model/stl';
+  inp.onchange = () => { const files = Array.from(inp.files||[]); if (files.length) addFiles(files, kind).then(()=>{ if (S.panelFull) renderPanel(); }); };
+  inp.click();
+}
+function openClipEd(mode){
+  const e = edUnit(); if (!e) return;
+  const {u, sd, i} = e, el = $('#clipEd');
+  edState.mode = mode;
+  const head = (t) => '<div class="ce-head"><b>'+t+'</b><span>'+esc(uTag(i)+' · '+stepName(u,i))+'</span><button class="ce-x" data-ce="close" aria-label="Schließen" title="Schließen">×</button></div>';
+  let h = '';
+  if (mode==='menu'){
+    const items = [
+      ['note', sd.notes.trim() ? 'Notiz bearbeiten' : 'Notiz schreiben', 'N'],
+      ['check', sd.checklist.length ? 'Checkliste bearbeiten' : 'Checkliste anlegen', '✓'],
+      ['link', 'Link hinzufügen', '↗'],
+      ['f:image', 'Bild hochladen', '▣'],
+      ['f:pdf', 'PDF hochladen', 'PDF'],
+    ];
+    if (u.type==='druck') items.push(['f:stl', 'STL hochladen', '▲']);
+    h = head('Hinzufügen') + '<div class="ce-grid">' + items.map(([k,l,ic])=>'<button class="ce-tile" data-ce="'+k+'"><span class="ce-ic">'+ic+'</span>'+l+'</button>').join('') + '</div>'
+      + '<p class="ce-note">Tipp: Bilder kannst du auch mit Strg+V einfügen oder Dateien auf die Seite ziehen.</p>';
+  } else if (mode==='note'){
+    h = head('Notiz') + '<textarea id="ce-note" class="ce-ta" placeholder="Was gehört zu „'+esc(stepName(u,i))+'“?">'+esc(sd.notes)+'</textarea>'
+      + '<div class="ce-act"><span class="ce-note" id="ce-saved">Wird automatisch gespeichert</span><button class="ce-btn primary" data-ce="close">Fertig</button></div>';
+  } else if (mode==='check'){
+    h = head('Checkliste') + '<ul class="ce-list" id="ce-list">' + sd.checklist.map(c=>'<li><input type="checkbox" data-ck="'+c.id+'"'+(c.done?' checked':'')+' aria-label="Erledigt"><input type="text" class="ce-in" data-ckt="'+c.id+'" value="'+esc(c.t)+'" aria-label="Punkt"><button class="ce-x" data-ckdel="'+c.id+'" aria-label="Punkt löschen" title="Löschen">×</button></li>').join('') + '</ul>'
+      + '<form class="ce-add" data-ceform="check"><input type="text" id="ce-newck" class="ce-in" placeholder="Neuer Punkt …" aria-label="Neuer Punkt"><button class="ce-btn">Hinzufügen</button></form>'
+      + '<div class="ce-act"><span class="ce-note">'+sd.checklist.filter(c=>c.done).length+' / '+sd.checklist.length+' erledigt</span><button class="ce-btn primary" data-ce="close">Fertig</button></div>';
+  } else if (mode==='link'){
+    h = head('Links') + (sd.links.length ? '<ul class="ce-list">'+sd.links.map(l=>'<li><span class="ce-lk">↗ '+esc(l.label||l.url)+'</span><button class="ce-x" data-lkdel="'+l.id+'" aria-label="Link löschen" title="Löschen">×</button></li>').join('')+'</ul>' : '')
+      + '<form class="ce-add col" data-ceform="link"><input type="url" id="ce-url" class="ce-in" placeholder="https://…" aria-label="Adresse" required><input type="text" id="ce-lbl" class="ce-in" placeholder="Titel (optional)" aria-label="Titel"><button class="ce-btn primary">Link hinzufügen</button></form>'
+      + '<div class="ce-act"><span></span><button class="ce-btn" data-ce="close">Fertig</button></div>';
+  }
+  el.innerHTML = h; el.hidden = false; placeClipEd();
+  const f = el.querySelector(mode==='note' ? '#ce-note' : mode==='check' ? '#ce-newck' : mode==='link' ? '#ce-url' : '.ce-tile');
+  if (f) setTimeout(()=>{ f.focus(); if (mode==='note'){ f.selectionStart = f.selectionEnd = f.value.length; } }, 30);
+}
+$('#clipEd').addEventListener('click', ev=>{
+  const b = ev.target.closest('[data-ce],[data-ckdel],[data-lkdel]'); if (!b) return;
+  const e = edUnit(); if (!e) return;
+  if (b.dataset.ce){
+    const k = b.dataset.ce;
+    if (k==='close'){ closeClipEd(); applyCutaway(); return; }
+    if (k.startsWith('f:')){ closeClipEd(); pickFiles(k.slice(2)); return; }
+    openClipEd(k); return;
+  }
+  if (b.dataset.ckdel){ e.sd.checklist = e.sd.checklist.filter(c=>c.id!==b.dataset.ckdel); edSaved(); openClipEd('check'); return; }
+  if (b.dataset.lkdel){ e.sd.links = e.sd.links.filter(l=>l.id!==b.dataset.lkdel); edSaved(); openClipEd('link'); return; }
+});
+let ceT;
+$('#clipEd').addEventListener('input', ev=>{
+  const e = edUnit(); if (!e) return;
+  if (ev.target.id==='ce-note'){ e.sd.notes = ev.target.value; clearTimeout(ceT); ceT = setTimeout(()=>{ edSaved(); const s = $('#ce-saved'); if (s) s.textContent = 'Gespeichert'; }, 450); const s = $('#ce-saved'); if (s) s.textContent = 'Speichert …'; }
+  if (ev.target.dataset.ckt){ const c = e.sd.checklist.find(c=>c.id===ev.target.dataset.ckt); if (c){ c.t = ev.target.value; clearTimeout(ceT); ceT = setTimeout(edSaved, 450); } }
+});
+$('#clipEd').addEventListener('change', ev=>{
+  const e = edUnit(); if (!e) return;
+  if (ev.target.dataset.ck){ const c = e.sd.checklist.find(c=>c.id===ev.target.dataset.ck); if (c){ c.done = ev.target.checked; edSaved(); openClipEd('check'); } }
+});
+$('#clipEd').addEventListener('submit', ev=>{
+  ev.preventDefault(); const e = edUnit(); if (!e) return;
+  if (ev.target.dataset.ceform==='check'){ const v = $('#ce-newck').value.trim(); if (!v) return; e.sd.checklist.push({id:uid(), t:v, done:false}); edSaved(); openClipEd('check'); }
+  if (ev.target.dataset.ceform==='link'){ const v = $('#ce-url').value.trim(); if (!v) return; e.sd.links.push({id:uid(), url:v, label:$('#ce-lbl').value.trim()}); edSaved(); openClipEd('link'); toast('Link hinzugefügt'); }
+});
+
 /* ---------- clicking things on the clipboard ---------- */
 function clipHitAt(cx, cy){
   const cl = cut.clip; if (!cl || !cl.g.userData.face) return null;
@@ -1887,7 +2016,7 @@ function clipHitAt(cx, cy){
   return {act:{t:'board'}};
 }
 const HOT_HINT = {finish:()=>'Etage abschließen', fgo:()=>'Etage abschließen und weiter wie geplant', fnew:()=>'Etage abschließen und neue Etage einfügen', fcancel:()=>'Abbrechen', fnone:()=>'', win:a=>({max:'Maximieren – Details rechts öffnen', restore:'Verkleinern', close:'Schließen'})[a.a], check:a=>a.done?'Wieder öffnen':'Abhaken', stl:()=>'3D ansehen', pdf:()=>'PDF ansehen', img:()=>'Foto ansehen', link:()=>'Link öffnen',
-  paper:a=>({notes:'Notizen bearbeiten', check:'Zur Checkliste', stl:'Zu den STL-Dateien', docs:'Zu den Dokumenten', links:'Zu den Links'})[a.kind]};
+  plus:()=>'Hinzufügen', paper:a=>({notes:'Notiz bearbeiten', check:'Checkliste bearbeiten', stl:'Dateien hinzufügen', docs:'Dateien hinzufügen', links:'Links bearbeiten'})[a.kind]};
 function scrollPanelTo(sel, focusSel){
   const found = $('#panelBody').querySelector(sel); if (!found) return;
   const el = found.closest('.blk, .field') || found;
@@ -1922,11 +2051,8 @@ async function clipAction(act){
     case 'pdf': openPdf(findRef(u, act.id)); break;
     case 'img': { const ref = findRef(u, act.id); const src = ref && await fileUrl(ref); if (src) openModal('<div class="lightbox"><img src="'+esc(src)+'" alt="'+esc(ref.name)+'"></div><div class="actions"><button class="btn" data-m="close">Schließen</button></div>'); break; }
     case 'link': openLink(act.url); break;
-    case 'paper': {
-      const map = {notes:['#f-notes','#f-notes'], check:['[data-form="ck"]','#f-ck'], stl:['#f-stl',null], docs:['#f-pdf',null], links:['[data-form="lk"]','#f-lk']}[act.kind];
-      if (map) scrollPanelTo(map[0], map[1]);
-      break;
-    }
+    case 'paper': openClipEd({notes:'note', check:'check', links:'link', stl:'menu', docs:'menu'}[act.kind] || 'menu'); break;
+    case 'plus': openClipEd('menu'); break;
   }
 }
 canvas.addEventListener('pointerup', e=>{
@@ -2930,7 +3056,8 @@ $('#menu').addEventListener('click', async e=>{
 
 document.addEventListener('keydown', e=>{
   if (e.key!=='Escape') return;
-  if (!$('#modal').hidden) closeModal();
+  if (!$('#clipEd').hidden) closeClipEd();
+  else if (!$('#modal').hidden) closeModal();
   else if (!$('#menu').hidden) closeMenu();
   else if (!$('#drawer').hidden) $('#drawer').hidden = true;
   else if (S.selId) closePanel();
