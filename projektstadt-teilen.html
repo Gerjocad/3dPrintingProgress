@@ -811,7 +811,7 @@ const M = {
   crane:new THREE.MeshLambertMaterial({color:0xf2b705}),
   weight:new THREE.MeshLambertMaterial({color:0x6b7480}),
   cable:new THREE.MeshBasicMaterial({color:0x333333}),
-  asphalt:new THREE.MeshLambertMaterial({color:0xbcc3cc}),
+  asphalt:new THREE.MeshLambertMaterial({color:0x9aa2ac}),
   sidewalk:new THREE.MeshLambertMaterial({color:0xe7eaee}),
   grass:new THREE.MeshLambertMaterial({color:0xa6d98d}),
   plaza:new THREE.MeshLambertMaterial({color:0xe9e2d3}),
@@ -941,7 +941,7 @@ function buildPeople(blocks, R){
   const skins = [0xf1c9a5,0xd9a47a,0xa87250,0x7a4e33,0xf6d7bf].map(c=>new THREE.Color(c));
   for (let k=0;k<n;k++){
     const [bx,bz] = blocks[Math.floor(R()*blocks.length)];
-    walkers.push({cx:bx*P, cz:bz*P, h:INNER/2+.35+R()*.5, u:R(), dir:R()<.5?1:-1, speed:.006+R()*.006, ph:R()*6});
+    walkers.push({cx:bx*P, cz:bz*P, h:INNER/2+.15+R()*.35, u:R(), dir:R()<.5?1:-1, speed:.006+R()*.006, ph:R()*6});
     body.setColorAt(k, shirts[Math.floor(R()*shirts.length)]); head.setColorAt(k, skins[Math.floor(R()*skins.length)]);
   }
   [body, head].forEach(m=>{ if (m.instanceColor) m.instanceColor.needsUpdate = true; m.castShadow = true; g.add(m); });
@@ -994,7 +994,7 @@ function buildCity(){
     flat(INNER, INNER, bi===0?M.plaza:M.grass, cx, .08, cz);
     // lane dashes on the four surrounding road centre lines
     for (const s of [-1,1]) for (let k=-5;k<=5;k++){ dashes.push([cx+k*4.2, cz+s*P/2, 0]); dashes.push([cx+s*P/2, cz+k*4.2, 1]); }
-    for (const [sx,sz] of SLOTS) lamps.push([cx+sx*(INNER/2+1.5), cz+sz*(INNER/2+1.5)]);
+    for (const [sx,sz] of SLOTS) lamps.push([cx+sx*(INNER/2+.82), cz+sz*(INNER/2+.82)]);   // outer edge of the sidewalk, not on the road
     if (bi===0){ // central park with fountain
       const f1 = new THREE.Mesh(new THREE.CylinderGeometry(4.2,4.4,.6,24), M.white); f1.position.set(cx,.35,cz); f1.receiveShadow=true; cityGroup.add(f1);
       const w = new THREE.Mesh(new THREE.CylinderGeometry(3.7,3.7,.1,24), M.water); w.position.set(cx,.66,cz); cityGroup.add(w);
@@ -1067,7 +1067,7 @@ function buildCity(){
     g.add(body,cab,hl);
     const [bx,bz] = blocks[Math.floor(R()*blocks.length)];
     const dir = R()<.5?1:-1;
-    cars.push({g, cx:bx*P, cz:bz*P, h: dir>0?P/2-1.5:P/2+1.5, u:R(), dir, speed:(.012+R()*.01)});
+    cars.push({g, cx:bx*P, cz:bz*P, h: dir>0?P/2-1.5:P/2+1.5, u:R(), dir, speed:(.012+R()*.01), v:0, wait:0, ignore:0});
     carGroup.add(g);
   }
   buildPeople(blocks, R);
@@ -1079,9 +1079,37 @@ function buildCity(){
 function perim(h,u){ u=((u%1)+1)%1; const s=u*4, k=Math.floor(s), f=s-k;
   const C=[[-h,-h],[h,-h],[h,h],[-h,h]]; const a=C[k], b=C[(k+1)%4];
   return [a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f, Math.atan2(b[1]-a[1], b[0]-a[0])]; }
+// cars keep their distance: they slow down behind another car and wait at crossings
 function updateCars(dt){
+  const n = cars.length;
   for (const c of cars){
-    c.u += c.dir*c.speed*dt;
+    const [x,z,ang] = perim(c.h, c.u);
+    const a = ang + (c.dir<0 ? Math.PI : 0);
+    c.px = c.cx+x; c.pz = c.cz+z; c.fx = Math.cos(a); c.fz = Math.sin(a);
+  }
+  const ahead = (c, o) => {
+    const dx = o.px-c.px, dz = o.pz-c.pz;
+    const fwd = dx*c.fx + dz*c.fz, lat = Math.abs(dx*c.fz - dz*c.fx);
+    return fwd > 0 && fwd < 3.6 && lat < 1.3;
+  };
+  for (let i=0;i<n;i++){
+    const c = cars[i];
+    let blocked = false;
+    if (c.ignore > 0) c.ignore -= dt;
+    else for (let j=0;j<n && !blocked;j++){
+      if (j===i) continue;
+      const o = cars[j];
+      if (!ahead(c, o)) continue;
+      // both see each other (e.g. at a crossing): the car with the lower number goes first
+      if (ahead(o, c) && i < j) continue;
+      blocked = true;
+    }
+    // never wait forever: after 3 s the car creeps on
+    c.wait = blocked ? c.wait + dt : 0;
+    if (c.wait > 3){ c.ignore = 1.2; c.wait = 0; blocked = false; }
+    const target = blocked ? 0 : c.speed;
+    c.v += (target - c.v) * Math.min(1, dt*(blocked ? 9 : 2.5));
+    c.u += c.dir*c.v*dt;
     const [x,z,ang] = perim(c.h, c.u);
     c.g.position.set(c.cx+x, 0, c.cz+z);
     c.g.rotation.y = -ang + (c.dir<0?Math.PI:0);
