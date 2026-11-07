@@ -9,6 +9,7 @@ Projektverwaltung als 3D-Stadt (Three.js), gebaut als Claude-Artifact (`projekts
 - Tag und Nacht folgen automatisch der Berliner Uhrzeit (Sonnenstand).
 - Volltextsuche über alle Etagen (Notizen, Checklisten, Links, Dateinamen), Zeitleiste pro Projekt, Drag & Drop für Bilder/PDF/STL, STL-Vorschaubilder.
 - MakerWorld-Link pro 3D-Druck-Projekt: Ein grünes Schild vor dem Gebäude öffnet das Modell. Überfällige Deadlines zeigen eine rote Fahne, bald fällige eine orange.
+- Bewohner spazieren über die Gehwege (mehr mit jedem fertigen Projekt), ab 5 fertigen Projekten eines Typs steht dessen Wahrzeichen im Park, und Baustellen ohne Änderung seit 14 Tagen bekommen Spinnweben und ein Pause-Schild.
 - Jahreszeiten nach Berliner Datum (Frühlingsblüten, Herbstlaub, Schnee im Winter) und Erfolge im Park bei 3, 10 und 25 fertigen Projekten.
 - Gespeichert wird im privaten Speicher des Artifacts (nur für den Besitzer). Außerhalb von claude.ai läuft die Seite mit localStorage. Ein Komplett-Backup als ZIP (alle Daten und Dateien) lässt sich exportieren und wieder importieren, dazu reiner JSON-Export.
 - Projekte lassen sich vorzeitig abschließen: Die restlichen Etagen werden weggelassen (Notizen bleiben gespeichert und lassen sich wieder aufnehmen), das Gebäude bekommt direkt sein Dach.

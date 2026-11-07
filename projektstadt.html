@@ -124,6 +124,7 @@ button,input,textarea,select{font:inherit;color:inherit}
 .vers{margin-top:12px}
 .vers .meta{white-space:normal}
 .rows-inline{display:grid;gap:6px}
+.row .idle{color:var(--warn);font-weight:600}
 .skipped{margin-top:10px;font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;border:1px dashed var(--line);border-radius:10px;padding:8px 10px}
 .skipped b{color:var(--fg)}
 .clip-ed{position:fixed;z-index:36;background:#fdfcf7;color:#26303b;border-radius:8px;box-shadow:0 14px 40px rgba(40,25,10,.35),0 0 0 1px rgba(80,50,20,.18);padding:14px 16px 16px;overflow:auto;display:grid;gap:12px;align-content:start;font:15px/1.45 var(--f-body);color-scheme:light}
@@ -865,6 +866,91 @@ function updateSnow(dt){
   snow.geometry.attributes.position.needsUpdate = true;
   snow.position.set(controls.target.x, 0, controls.target.z);
 }
+/* ---------- landmarks: 5 finished projects of one type put its landmark into the park ---------- */
+const LANDMARK_N = 5;
+const LANDMARKS = {druck:'Riesen-3D-Drucker', app:'Funkturm', web:'Weltkugel', video:'Filmkamera', allg:'Stadtsäule', elek:'Tesla-Spule', shop:'Einkaufstüte', diy:'Riesenhammer', lern:'Bücherturm'};
+const LM_SPOTS = [[-8.5,-8.5],[-8.5,8.5],[8.5,8.5],[0,-13],[0,13],[-13,0],[13,0],[-14,14],[14,14]];
+const doneByType = () => { const c = {}; for (const p of S.projects.values()) if (statusOf(p)==='done') c[p.type] = (c[p.type]||0)+1; return c; };
+const landmarkTypes = () => { const c = doneByType(); return Object.keys(TYPES).filter(t=>(c[t]||0) >= LANDMARK_N); };
+function makeLandmark(type){
+  const g = new THREE.Group(), col = new THREE.Color(TYPES[type].color).getHex();
+  const tm = new THREE.MeshLambertMaterial({color:col}), dark = M.dark, white = M.white;
+  g.add(box(3.4,.5,3.4,white,0,.25,0)); g.add(box(1.2,.35,.08,goldMat,0,.3,1.72));
+  const add = m => { m.castShadow = true; g.add(m); return m; };
+  if (type==='druck'){
+    for (const [x,z] of [[-1.2,-1.2],[1.2,-1.2],[-1.2,1.2],[1.2,1.2]]) add(box(.22,4.6,.22,dark,x,2.8,z));
+    add(box(2.8,.22,2.8,dark,0,5.1,0)); add(box(2.6,.15,2.6,white,0,.65,0));
+    add(box(.6,.5,.6,tm,.3,4.2,0)); add(box(2.6,.12,.12,dark,0,4.45,0));
+    const prt = add(new THREE.Mesh(new THREE.CylinderGeometry(.7,.9,1.6,6), tm)); prt.position.set(0,1.5,0);
+    const spool = add(new THREE.Mesh(new THREE.TorusGeometry(.5,.18,8,16), tm)); spool.position.set(0,5.7,0);
+  } else if (type==='app'){
+    const m1 = add(new THREE.Mesh(new THREE.CylinderGeometry(.12,.55,7,4), dark)); m1.position.y = 4;
+    for (const y of [2.2,4,5.6]){ const r = add(new THREE.Mesh(new THREE.TorusGeometry(.75-y*.08,.06,6,16), tm)); r.rotation.x = Math.PI/2; r.position.y = y; }
+    const bc = new THREE.Mesh(new THREE.SphereGeometry(.25,10,8), beaconMat); bc.position.y = 7.6; g.add(bc);
+  } else if (type==='web'){
+    const gl = add(new THREE.Mesh(new THREE.IcosahedronGeometry(1.7,1), new THREE.MeshLambertMaterial({color:col, flatShading:true}))); gl.position.y = 3.2;
+    const ring = add(new THREE.Mesh(new THREE.TorusGeometry(2.2,.08,6,32), goldMat)); ring.position.y = 3.2; ring.rotation.set(1.2,.3,0);
+    add(box(.3,1.2,.3,dark,0,1.1,0));
+  } else if (type==='video'){
+    add(box(2.6,1.6,1.4,dark,0,2.6,0));
+    for (const x of [-.7,.6]){ const r = add(new THREE.Mesh(new THREE.CylinderGeometry(.7,.7,.25,16), tm)); r.rotation.x = Math.PI/2; r.position.set(x,4.1,0); }
+    const lens = add(new THREE.Mesh(new THREE.CylinderGeometry(.35,.5,1,12), dark)); lens.rotation.z = Math.PI/2; lens.position.set(1.7,2.6,0);
+    for (const x of [-.8,.8]) add(box(.12,1.6,.12,dark,x,1.1,0));
+  } else if (type==='elek'){
+    add(new THREE.Mesh(new THREE.CylinderGeometry(.55,.75,4,16), new THREE.MeshLambertMaterial({color:0xb87333}))).position.y = 2.5;
+    const tor = new THREE.Mesh(new THREE.TorusGeometry(1.1,.35,12,24), new THREE.MeshLambertMaterial({color:0xd8dde3, emissive:col, emissiveIntensity:.35})); tor.rotation.x = Math.PI/2; tor.position.y = 4.8; g.add(tor);
+    g.userData.spin = tor;
+  } else if (type==='shop'){
+    add(box(2.4,2.8,1.3,tm,0,2,0));
+    const h1 = add(new THREE.Mesh(new THREE.TorusGeometry(.6,.08,6,16,Math.PI), white)); h1.position.set(0,3.4,0);
+    add(box(2.45,.4,1.35,white,0,3.1,0));
+  } else if (type==='diy'){
+    const h = add(box(.35,4.2,.35,new THREE.MeshLambertMaterial({color:0x9c6b3a}),0,2.6,0)); h.rotation.z = .25;
+    const head = add(box(2,.8,.8,new THREE.MeshLambertMaterial({color:0x8e9aa7}),-.5,4.6,0)); head.rotation.z = .25;
+  } else if (type==='lern'){
+    const cols2 = [col, 0xd9546a, 0x2c8452, 0xf2b705, 0x3d8bdb];
+    for (let k=0;k<5;k++){ const b = add(box(2.4-k*.12,.55,1.7-k*.06,new THREE.MeshLambertMaterial({color:cols2[k]}),0,.8+k*.58,0)); b.rotation.y = (k%2?.15:-.1); }
+    add(box(1.8,.12,1.8,dark,0,3.85,0)); add(box(.9,.4,.9,dark,0,3.6,0));
+  } else {
+    add(new THREE.Mesh(new THREE.CylinderGeometry(.45,.65,5.5,8), tm)).position.y = 3.2;
+    add(new THREE.Mesh(new THREE.SphereGeometry(.7,12,10), goldMat)).position.y = 6.3;
+  }
+  return g;
+}
+let landmarkSpin = [];
+/* ---------- residents walking the sidewalks ---------- */
+let people = null, walkers = [];
+function residentCount(){ const all = Array.from(S.projects.values()); return Math.min(80, 6 + all.filter(p=>statusOf(p)==='done').length*4 + all.filter(p=>statusOf(p)==='build').length*2); }
+function buildPeople(blocks, R){
+  if (people){ scene.remove(people.g); people.body.geometry.dispose(); people.head.geometry.dispose(); people = null; }
+  const n = residentCount(); walkers = [];
+  const g = new THREE.Group();
+  const bodyG = new THREE.CylinderGeometry(.2,.26,.9,6); bodyG.translate(0,.6,0);
+  const headG = new THREE.SphereGeometry(.19,8,6); headG.translate(0,1.25,0);
+  const body = new THREE.InstancedMesh(bodyG, M.crown, n), head = new THREE.InstancedMesh(headG, M.crown, n);
+  const shirts = [0xe0475b,0x3d8bdb,0xf2b705,0x2c8452,0x8a6cd8,0xff8a3d,0x26303b,0xf2f2f2].map(c=>new THREE.Color(c));
+  const skins = [0xf1c9a5,0xd9a47a,0xa87250,0x7a4e33,0xf6d7bf].map(c=>new THREE.Color(c));
+  for (let k=0;k<n;k++){
+    const [bx,bz] = blocks[Math.floor(R()*blocks.length)];
+    walkers.push({cx:bx*P, cz:bz*P, h:INNER/2+.35+R()*.5, u:R(), dir:R()<.5?1:-1, speed:.006+R()*.006, ph:R()*6});
+    body.setColorAt(k, shirts[Math.floor(R()*shirts.length)]); head.setColorAt(k, skins[Math.floor(R()*skins.length)]);
+  }
+  [body, head].forEach(m=>{ if (m.instanceColor) m.instanceColor.needsUpdate = true; m.castShadow = true; g.add(m); });
+  scene.add(g); people = {g, body, head};
+}
+const _po = new THREE.Object3D();
+function updatePeople(dt, now){
+  if (!people) return;
+  walkers.forEach((w,k)=>{
+    if (!reduceMotion) w.u += w.dir*w.speed*dt;
+    const [x,z,ang] = perim(w.h, w.u);
+    _po.position.set(w.cx+x, reduceMotion ? 0 : Math.abs(Math.sin(now/170+w.ph))*.07, w.cz+z);
+    _po.rotation.set(0, -ang + (w.dir<0?Math.PI:0), 0); _po.updateMatrix();
+    people.body.setMatrixAt(k, _po.matrix); people.head.setMatrixAt(k, _po.matrix);
+  });
+  people.body.instanceMatrix.needsUpdate = true; people.head.instanceMatrix.needsUpdate = true;
+}
+let lastLandmarks = null;
 let lastTier = null;
 function buildCity(){
   const lots = Array.from(S.projects.values()).map(p=>p.lot);
@@ -872,7 +958,10 @@ function buildCity(){
   const nb = Math.max(3, Math.floor(maxLot/4) + 2);   // project blocks incl. one spare
   const occupied = new Set(lots);
   const season = seasonNow(), tier = tierOf(doneCount());
-  const sig = nb+'|'+Array.from(occupied).sort((a,b)=>a-b).join(',')+'|'+season+'|'+tier;
+  const lmTypes = landmarkTypes(), resN = residentCount();
+  const sig = nb+'|'+Array.from(occupied).sort((a,b)=>a-b).join(',')+'|'+season+'|'+tier+'|'+lmTypes.join(',')+'|'+resN;
+  if (lastLandmarks !== null && S.loaded){ const fresh = lmTypes.filter(t=>!lastLandmarks.includes(t)); if (fresh.length) setTimeout(()=>toast('Neues Wahrzeichen im Park: '+LANDMARKS[fresh[0]]+'!'), 600); }
+  lastLandmarks = lmTypes;
   if (lastTier !== null && tier > lastTier && S.loaded) toast('Neuer Erfolg: '+MILESTONES[tier-1].label+'!');
   lastTier = tier;
   const SE = SEASON[season];
@@ -911,7 +1000,10 @@ function buildCity(){
         const sp = new THREE.Mesh(new THREE.SphereGeometry(.55,16,12), goldMat); sp.position.set(mx,7.7,mz); cityGroup.add(sp);
         if (tier >= 3){ for (let k=0;k<5;k++){ const c=new THREE.Mesh(new THREE.ConeGeometry(.22,.8,6), goldMat); const a=k/5*Math.PI*2; c.position.set(mx+Math.cos(a)*.55,8.4,mz+Math.sin(a)*.55); cityGroup.add(c);} }
       }
-      for (const [sx,sz] of SLOTS){ for(let k=0;k<3;k++) trees.push([cx+sx*(7+R()*9), cz+sz*(7+R()*9), .9+R()*.5, R()<.5?0:1]); }
+      // landmarks of the project types with 5+ finished projects
+      landmarkSpin = [];
+      const used = lmTypes.map((t,k)=>{ const [lx,lz] = LM_SPOTS[k % LM_SPOTS.length]; const lm = makeLandmark(t); lm.position.set(cx+lx,0,cz+lz); cityGroup.add(lm); if (lm.userData.spin) landmarkSpin.push(lm.userData.spin); return [cx+lx, cz+lz]; });
+      for (const [sx,sz] of SLOTS){ for(let k=0;k<3;k++){ const tx = cx+sx*(7+R()*9), tz = cz+sz*(7+R()*9); if (used.some(([ux,uz])=>Math.hypot(tx-ux,tz-uz)<3.4)) continue; trees.push([tx, tz, .9+R()*.5, R()<.5?0:1]); } }
       return;
     }
     // free lots get trees, occupied lots small corner shrubs
@@ -969,6 +1061,7 @@ function buildCity(){
     cars.push({g, cx:bx*P, cz:bz*P, h: dir>0?P/2-1.5:P/2+1.5, u:R(), dir, speed:(.012+R()*.01)});
     carGroup.add(g);
   }
+  buildPeople(blocks, R);
   // shadow frustum covers the city
   const sc = sun.shadow.camera; const e = cityExtent+30;
   sc.left=-e; sc.right=e; sc.top=e; sc.bottom=-e; sc.near=1; sc.far=1200; sc.updateProjectionMatrix();
@@ -1160,9 +1253,31 @@ function buildTower(u, type, dims, part, pid, R, opt){
 
 function buildingSig(p){
   const us = u => [u.step,nSteps(u),u.builtTop,u.version,u.stepData.map(x=>x.ver).join(''),u.makerworld?1:0].join(':');
-  return [p.type,p.state,p.lot,deadlineState(p),us(p), p.annexes.map(us).join(','), p.branch ? p.branch.at+'/'+p.branch.arms.map(us).join(',') : ''].join('|');
+  return [p.type,p.state,p.lot,deadlineState(p),idleDays(p)?'idle':'',us(p), p.annexes.map(us).join(','), p.branch ? p.branch.at+'/'+p.branch.arms.map(us).join(',') : ''].join('|');
 }
 const ANNEX_SLOTS = [[1,0],[-1,0],[0,-1]];
+const IDLE_DAYS = 14;
+function idleDays(p){
+  if (isRuin(p) || projectDone(p)) return 0;
+  const d = Math.floor((Date.now() - (p.updatedAt||Date.now()))/864e5);
+  return d >= IDLE_DAYS ? d : 0;
+}
+let _webMat = null, _pauseMat = null;
+function webMat(){
+  if (_webMat) return _webMat;
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128; const c = cv.getContext('2d');
+  c.strokeStyle = 'rgba(255,255,255,.9)'; c.lineWidth = 1.5;
+  for (let k=0;k<8;k++){ const a = k/8*Math.PI*2; c.beginPath(); c.moveTo(64,64); c.lineTo(64+Math.cos(a)*62, 64+Math.sin(a)*62); c.stroke(); }
+  for (let r=10;r<64;r+=11){ c.beginPath(); for (let k=0;k<=8;k++){ const a = k/8*Math.PI*2, rr = r+(k%2)*2; const x = 64+Math.cos(a)*rr, y = 64+Math.sin(a)*rr; k?c.lineTo(x,y):c.moveTo(x,y); } c.stroke(); }
+  const t = new THREE.CanvasTexture(cv);
+  return _webMat = new THREE.MeshBasicMaterial({map:t, transparent:true, side:THREE.DoubleSide, depthWrite:false});
+}
+function pauseMat(){
+  if (_pauseMat) return _pauseMat;
+  const t = canvasTex(c=>{ c.fillStyle='#f2b705'; c.fillRect(0,0,256,128); c.fillStyle='#26303b'; for (let k=-2;k<12;k++){ c.beginPath(); c.moveTo(k*28,0); c.lineTo(k*28+14,0); c.lineTo(k*28-18,128); c.lineTo(k*28-32,128); c.fill(); }
+    c.fillStyle='#f2b705'; c.fillRect(22,26,212,76); c.fillStyle='#26303b'; c.font='900 58px Figtree, system-ui, sans-serif'; c.textAlign='center'; c.fillText('PAUSE', 128, 86); });
+  return _pauseMat = new THREE.MeshLambertMaterial({map:t});
+}
 function deadlineState(p){
   if (!p.deadline || isRuin(p) || projectDone(p)) return null;
   const diff = Math.round((Date.parse(p.deadline) - Date.parse(berlinNow().iso))/864e5);
@@ -1273,6 +1388,19 @@ function buildBuilding(p){
     crane.position.set(bb.max.x+1.5, 0, bb.min.z-1.3); crane.userData.phase = R()*6;
     tagPick(crane,p.id,c0.u.step,c0.part); cg.add(crane);
     root.userData.crane = crane;
+  }
+  // an idle building site: cobwebs on the crane, a "PAUSE" sign at the fence, the crane stands still
+  const idle = idleDays(p);
+  if (idle && root.userData.crane){
+    const cr = root.userData.crane; cr.userData.idle = true;
+    const jib = cr.userData.jib;
+    const w1 = new THREE.Mesh(new THREE.PlaneGeometry(2.6,2.6), webMat()); w1.position.set(1.2,-1.1,.32); jib.add(w1);
+    const w2 = new THREE.Mesh(new THREE.PlaneGeometry(2.2,2.2), webMat()); w2.position.set(-1.6,-.9,-.3); w2.rotation.y = .6; jib.add(w2);
+    const w3 = new THREE.Mesh(new THREE.PlaneGeometry(1.6,1.6), webMat()); w3.position.set(.45,1.3,.45); w3.rotation.y = .8; cr.add(w3);
+    const sg = new THREE.Group(); sg.position.set(ringR*.35, 0, ringR-.4);
+    sg.add(box(.12,2,.12,M.pole,-1.1,1,0), box(.12,2,.12,M.pole,1.1,1,0));
+    const bd = new THREE.Mesh(new THREE.BoxGeometry(2.8,1.4,.1), [M.white,M.white,M.white,M.white,pauseMat(),M.white]); bd.position.y = 2.3; bd.castShadow = true; sg.add(bd);
+    tagPick(sg, p.id, p.step, ''); root.add(sg);
   }
   // deadline flag: orange shortly before, red when overdue
   const dl = deadlineState(p);
@@ -2087,7 +2215,8 @@ canvas.addEventListener('pointermove', e=>{
     if (pk && pk.mw){ tt.innerHTML = 'Auf MakerWorld öffnen<small>'+esc(pk.mw.replace(/^https?:\/\//,'').slice(0,48))+'</small>'; tt.style.left = e.clientX+'px'; tt.style.top = e.clientY+'px'; tt.hidden=false; canvas.style.cursor='pointer'; return; }
     if (pk && S.projects.has(pk.pid)){
       const p = S.projects.get(pk.pid), u = partOf(p, pk.part) || p;
-      tt.innerHTML = esc(p.name)+(u!==p?' · '+esc(u.name):'')+'<small>'+floorTag(pk.step+offOf(p,pk.part))+' · '+esc(stepName(u,pk.step))+'</small>';
+      const idl = idleDays(p);
+      tt.innerHTML = esc(p.name)+(u!==p?' · '+esc(u.name):'')+'<small>'+floorTag(pk.step+offOf(p,pk.part))+' · '+esc(stepName(u,pk.step))+(idl?' · ruht seit '+idl+' Tagen':'')+'</small>';
       tt.style.left = e.clientX+'px'; tt.style.top = e.clientY+'px'; tt.hidden=false; canvas.style.cursor='pointer';
     } else { tt.hidden=true; canvas.style.cursor=''; }
   });
@@ -2100,8 +2229,8 @@ function frame(now){
   requestAnimationFrame(frame);
   const dt = Math.min(.05,(now-last)/1000); last = now;
   if (document.hidden) return;
-  updateFly(now); controls.update(); updateAnims(now); updateLifts(); updateFades(now); updateClipboard(now); updateCars(dt); updateConfetti(dt); updateViewOffset();
-  for (const b of buildings.values()){ const c=b.group.userData.crane; if(c) c.userData.jib.rotation.y = c.userData.phase + Math.sin(now/1000*.18 + c.userData.phase)*1.3;
+  updateFly(now); controls.update(); updateAnims(now); updateLifts(); updateFades(now); updateClipboard(now); updateCars(dt); updatePeople(dt, now); updateConfetti(dt); landmarkSpin.forEach(t=>{ if (!reduceMotion) t.rotation.z += dt*.8; }); updateViewOffset();
+  for (const b of buildings.values()){ const c=b.group.userData.crane; if(c && !c.userData.idle) c.userData.jib.rotation.y = c.userData.phase + Math.sin(now/1000*.18 + c.userData.phase)*1.3;
     const f = b.group.userData.flag; if (f && !reduceMotion){ f.parent.rotation.y = Math.sin(now/700)*.25; f.rotation.y = Math.sin(now/300)*.12; } }
   updateSnow(dt);
   if (selRing.visible){ selRing.material.opacity = .55 + .3*Math.sin(now/300); }
@@ -2141,6 +2270,10 @@ function updateAchv(){
   $('#achv').innerHTML = (got.length ? '<b>Erfolge:</b> '+got.map(m=>esc(m.label)).join(', ')+'<br>' : '')
     + (next ? 'Nächstes Ziel: '+esc(next.label)+' bei '+next.n+' fertigen Projekten ('+c+'/'+next.n+')' : 'Alle Erfolge freigeschaltet!')
     + ' · '+SEASON[seasonNow()].label+' in Berlin';
+  const byT = doneByType(), have = landmarkTypes();
+  const close = Object.keys(TYPES).filter(t=>!have.includes(t) && (byT[t]||0)>0).sort((a,b)=>(byT[b]||0)-(byT[a]||0))[0];
+  $('#achv').innerHTML += '<br>'+(have.length ? '<b>Wahrzeichen:</b> '+have.map(t=>esc(LANDMARKS[t])).join(', ')+(close?' · ':'') : '')
+    + (close ? 'Nächstes Wahrzeichen: '+esc(LANDMARKS[close])+' ('+esc(TYPES[close].label)+' '+(byT[close]||0)+'/'+LANDMARK_N+')' : (have.length ? '' : 'Wahrzeichen: ab 5 fertigen Projekten eines Typs'));
 }
 function updateStats(){
   updateAchv();
@@ -2984,9 +3117,9 @@ function renderList(){
       : p.branch ? 'Zweige: '+p.branch.arms.map(a=>a.name+' '+(isDone(a)?'fertig':floorTag(a.step+p.branch.at))).join(' · ')
       : isDone(p) && openAnnex ? 'Anbau „'+openAnnex.name+'“ · '+floorTag(openAnnex.step)+' · '+stepName(openAnnex,openAnnex.step)
       : (inUpdate(p)?'Umbau v'+p.version+' · ':'')+floorTag(p.step)+' · '+stepName(p,p.step);
-    const hit = hits.get(p.id);
+    const hit = hits.get(p.id), idl = idleDays(p);
     const hitHtml = hit ? '<div class="hit">'+esc(hit.where)+': '+hit.snip+'</div>' : '';
-    return '<button class="row" data-id="'+p.id+'"'+(hit?' data-part="'+hit.part+'" data-step="'+hit.step+'"':'')+' style="--tc:'+(st==='ruin'?'#7a726b':T.color)+'">'+typeIcon(p.type)+'<div style="min-width:0"><div class="t">'+esc(p.name)+'</div><div class="s">'+esc(sub)+(dl?' · <span style="color:'+(dl.late?'var(--danger)':'inherit')+'">'+esc(dl.txt)+'</span>':'')+'</div>'+hitHtml+'<div class="bar"><i style="width:'+Math.round(Math.min(p.step,n)/n*100)+'%"></i></div></div><div class="r">'+Math.min(p.step,n)+'/'+n+'<br>'+PRIO[p.priority]+'</div></button>';
+    return '<button class="row" data-id="'+p.id+'"'+(hit?' data-part="'+hit.part+'" data-step="'+hit.step+'"':'')+' style="--tc:'+(st==='ruin'?'#7a726b':T.color)+'">'+typeIcon(p.type)+'<div style="min-width:0"><div class="t">'+esc(p.name)+'</div><div class="s">'+esc(sub)+(dl?' · <span style="color:'+(dl.late?'var(--danger)':'inherit')+'">'+esc(dl.txt)+'</span>':'')+(idl?' · <span class="idle">ruht seit '+idl+' Tagen</span>':'')+'</div>'+hitHtml+'<div class="bar"><i style="width:'+Math.round(Math.min(p.step,n)/n*100)+'%"></i></div></div><div class="r">'+Math.min(p.step,n)+'/'+n+'<br>'+PRIO[p.priority]+'</div></button>';
   }).join('') : '<p class="empty-note">'+(S.projects.size?'Keine Projekte passen zu deiner Suche.':'Noch keine Projekte angelegt.')+'</p>';
 }
 $('#btnList').addEventListener('click', ()=>{ const d=$('#drawer'); d.hidden=!d.hidden; if(!d.hidden){ renderFilters(); renderList(); $('#q').focus(); } });
