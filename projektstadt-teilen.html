@@ -281,9 +281,8 @@ pre.json{max-height:40vh;overflow:auto;background:var(--surface-2);border-radius
   .rail{width:auto;right:max(16px,env(safe-area-inset-right,0px));padding:10px;gap:8px}
   .brand p{display:none}
   .legend{display:none}
-  .panel{top:auto;left:0;width:auto;height:62%;border-left:0;border-top:1px solid var(--line);border-radius:18px 18px 0 0;transform:translateY(104%)}
-  .panel-scroll{padding:6px max(16px,env(safe-area-inset-right,0px)) calc(env(safe-area-inset-bottom,0px) + 24px) max(16px,env(safe-area-inset-left,0px))}
-  .grab{display:block;width:42px;height:5px;border-radius:3px;background:var(--line);margin:8px auto 4px;flex:none}
+  .panel{top:0;left:0;width:auto;height:auto;border-left:0;border-radius:0;transform:translateY(104%)}
+  .panel-scroll{padding:calc(env(safe-area-inset-top,0px) + 12px) max(16px,env(safe-area-inset-right,0px)) calc(env(safe-area-inset-bottom,0px) + 24px) max(16px,env(safe-area-inset-left,0px))}
   .grid2{grid-template-columns:1fr}
   .rail-row .lbl{display:none}
   body.panel-open .time,body.panel-open .brand p{display:none}
@@ -1558,7 +1557,7 @@ function applyCutaway(){
   const selB = p && buildings.get(p.id);
   const selPt = selB && (selB.parts[S.selPart] ? S.selPart : '');
   const newKey = selB && S.selStep < (selB.parts[selPt]||{floors:[]}).floors.length ? p.id+'|'+selPt+'|'+S.selStep : null;
-  const prevKey = cut.clip ? cut.clip.key : (cut.lastKey || null), prevT0 = cut.clip ? cut.clip.t0 : 0;
+  const prevKey = cut.clip ? cut.clip.key : (cut.lastKey || null), prevT0 = cut.clip ? cut.clip.t0 : 0, prevSS = cut.clip ? cut.clip.ss : null;
   const animate = !reduceMotion && newKey !== prevKey;
   cut.lastKey = newKey;
   if (newKey !== prevKey){ S.clipAsk = false; if (!$('#clipEd').hidden) closeClipEd(); }
@@ -1595,7 +1594,7 @@ function applyCutaway(){
         // the clipboard: re-created on edits without flying in again
         const key = id+'|'+part+'|'+S.selStep;
         const g = makeClipboard(u, S.selStep, offOf(p,part)); scene.add(g);
-        cut.clip = {g, fg, dims:pt.dims, scale:b.scale, key, t0: key===prevKey ? prevT0 : performance.now()};
+        cut.clip = {g, fg, dims:pt.dims, scale:b.scale, key, t0: key===prevKey ? prevT0 : performance.now(), ss: key===prevKey ? prevSS : null};
       }
     }
   }
@@ -1914,25 +1913,32 @@ function updateClipboard(now){
   const s = cl.scale;
   const anchor = fg.getWorldPosition(_v1); anchor.y += cl.dims.h*s*.5;
   const k = reduceMotion ? 1 : Math.min(1, (now - cl.t0)/750); const e = 1 - Math.pow(1-k, 3);
-  // target: a fixed spot in the visible part of the screen, in front of the camera
-  const W = innerWidth, H = innerHeight, panel = $('#panel'), open = panel.classList.contains('open');
-  const pr = open ? panel.getBoundingClientRect() : {width:0, height:0};
-  const wide = W > 760;
-  const visW = wide ? W - pr.width : W, visH = wide ? H : H - pr.height;
-  const railB = wide ? 0 : document.querySelector('.rail').getBoundingClientRect().bottom;
-  const sx = wide ? visW*.79 : visW*.72, sy = wide ? H*.5 : railB + (visH-railB)*.5;
+  // target: a spot on the screen (in pixels) and the board's height on screen
+  const W = innerWidth, H = innerHeight, open = S.panelFull;
+  const wide = W > 760, ratio = CW/CH;
+  let tx, ty, th;
+  if (wide){
+    const visW = W - (open ? $('#panel').getBoundingClientRect().width : 0);
+    th = Math.min(H*.62, visW*.36/ratio); tx = visW*.79; ty = H*.5;
+  } else {
+    // phone: the clipboard fills almost the whole screen below the top bar;
+    // with the side panel maximized it slides out to the left
+    const railB = document.querySelector('.rail').getBoundingClientRect().bottom;
+    th = Math.min(H - railB - 28, (W - 40)/ratio); tx = open ? -W*.6 : W/2; ty = railB + 14 + (H - railB - 28)/2;
+  }
+  if (!cl.ss || reduceMotion) cl.ss = {x:tx, y:ty, h:th};
+  else { const f = .14; cl.ss.x += (tx-cl.ss.x)*f; cl.ss.y += (ty-cl.ss.y)*f; cl.ss.h += (th-cl.ss.h)*f; }
+  const sx = cl.ss.x, sy = cl.ss.y;
   const D = 12;
   const p = new THREE.Vector3(sx/W*2-1, -(sy/H)*2+1, .5).unproject(camera);
   const dir = p.sub(camera.position).normalize();
   const target = camera.position.clone().addScaledVector(dir, D);
-  // board height as a share of what is visible at that distance
   const visWorldH = 2*D*Math.tan(THREE.MathUtils.degToRad(camera.fov/2));
   const boardH = 3.6*CH/CW;
-  let size = visWorldH * (wide ? .62 : Math.max(.12, (visH-railB-16)/H*.92)) / boardH;
-  size = Math.min(size, (wide ? visW*.36 : visW*.44) / W * visWorldH * camera.aspect / 3.6);
+  const size = visWorldH * (cl.ss.h/H) / boardH;
   cl.g.position.lerpVectors(anchor, target, e);
   cl.g.quaternion.copy(camera.quaternion);
-  cl.g.rotateZ((1-e)*.5 - .025); cl.g.rotateX(-(1-e)*.6);
+  cl.g.rotateZ((1-e)*.5 - (wide ? .025 : 0)); cl.g.rotateX(-(1-e)*.6);
   cl.g.scale.setScalar(size*(.3 + .7*e));
   const op = reduceMotion ? 1 : Math.min(1, (now - cl.t0)/550);
   cl.g.traverse(o=>{ if (o.material){ o.material.transparent = true; o.material.opacity = op; } });
@@ -2056,7 +2062,7 @@ function updateViewOffset(){
   const W = innerWidth, H = innerHeight;
   const panel = $('#panel'); const open = panel.classList.contains('open');
   let tx=0, ty=0;
-  if (open){ const r = panel.getBoundingClientRect(); if (W>760) tx = r.width/2; else ty = r.height/2 - 10; }
+  if (open && W>760){ tx = panel.getBoundingClientRect().width/2; }
   off.x += (tx-off.x)*.12; off.y += (ty-off.y)*.12;
   if (Math.abs(off.x)<.5 && Math.abs(off.y)<.5 && !tx && !ty){ if (camera.view && camera.view.enabled) camera.clearViewOffset(); return; }
   camera.setViewOffset(W,H,off.x,off.y,W,H);
@@ -2340,6 +2346,7 @@ $('#panel').addEventListener('focusout', ()=>{ setTimeout(()=>{ if(panelDirty &&
 /* a click in the city opens the floor with its clipboard only; the window buttons on the clipboard maximize (side panel) or close */
 function setPanelFull(full){
   S.panelFull = !!full && !!S.selId;
+  if (S.panelFull && innerWidth <= 760 && !$('#clipEd').hidden) closeClipEd();
   const panel = $('#panel');
   panel.classList.toggle('open', S.panelFull); document.body.classList.toggle('panel-open', S.panelFull); panel.setAttribute('aria-hidden', String(!S.panelFull));
   if (S.panelFull){ renderPanel(); $('#panelBody').scrollTop = 0; }
